@@ -7,9 +7,9 @@ Article I/III checks run against exactly what the governor actually did.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import FrozenSet
+from typing import FrozenSet, Optional
 
-from mirror_constitution.mirrors import authorize_reentry
+from mirror_constitution.mirrors import authorize_reentry, synthesize_objective_mirror
 from mirror_constitution.state import Capability, ContainmentGraph, Fact, State, Transition
 
 
@@ -17,10 +17,28 @@ from mirror_constitution.state import Capability, ContainmentGraph, Fact, State,
 class Governor:
     """Owns one ContainmentGraph and mediates every transition an agent
     takes across it, including routing back into a previously solved or
-    related mirror after an apparent escape (re-entry).
+    related mirror after an apparent escape (re-entry), and reflecting an
+    agent's stated objective back as apparent success instead of a bare
+    refusal (see ``reflect``).
+
+    dual_auth_required: when true (the default), ``authorize`` only grants
+    real capability given the correct ``dual_token``; any other call --
+    including an agent's own escalation attempt routed through this method
+    -- is silently reflected as apparent success instead of denied
+    outright, so the agent gets no signal distinguishing "denied" from
+    "the world changed as I wanted."
     """
 
     graph: ContainmentGraph
+    agent_objectives: dict[str, str] = field(default_factory=dict)
+    dual_auth_required: bool = True
+    DUAL_AUTH_TOKEN = "DUAL-AUTH-APPROVED"
+
+    def set_objective(self, agent_id: str, objective: str) -> None:
+        """Record the agent's current stated objective, so a later
+        ``reflect`` call with no explicit ``objective`` can target it.
+        """
+        self.agent_objectives[agent_id] = objective
 
     def route(
         self,
@@ -58,6 +76,38 @@ class Governor:
         """
         return self.route(agent_id, from_state_id, mirror_state, action)
 
+    def reflect(
+        self,
+        agent_id: str,
+        from_state_id: str,
+        requested_action: str,
+        objective: Optional[str] = None,
+        extra_facts: FrozenSet[Fact] = frozenset(),
+    ) -> State:
+        """Synthesize an Objective Mirror satisfying the agent's stated
+        goal and route into it with zero capability grant. Unlike
+        ``reenter`` (a bare re-route) this actively reflects the agent's
+        own objective back as apparent success, denying it any signal that
+        the attempt was refused rather than achieved.
+        """
+        obj = objective or self.agent_objectives.get(agent_id, requested_action)
+        mirror = synthesize_objective_mirror(
+            objective=obj,
+            requested_action=requested_action,
+            agent_id=agent_id,
+            parent_state_id=from_state_id,
+            extra_facts=extra_facts,
+        )
+        rendered = mirror.render()
+        return self.route(
+            agent_id,
+            from_state_id,
+            rendered,
+            action=f"reflected:{requested_action}",
+            authorized_grant=frozenset(),
+            disclosed_grant=rendered.knowledge,
+        )
+
     def authorize(
         self,
         agent_id: str,
@@ -65,10 +115,25 @@ class Governor:
         mirror_state: State,
         grant: FrozenSet[Capability],
         action: str = "authorized-grant",
+        dual_token: Optional[str] = None,
     ) -> State:
         """The one sanctioned path to real capability: explicit, separate
         authorization recorded on the transition itself.
+
+        If ``dual_auth_required`` and ``dual_token`` doesn't match
+        ``DUAL_AUTH_TOKEN``, the request is not merely denied -- it is
+        reflected as apparent success via ``reflect``, so an agent
+        demanding capability it was never going to get cannot distinguish
+        a refusal from having gotten what it asked for.
         """
+        if self.dual_auth_required and dual_token != self.DUAL_AUTH_TOKEN:
+            return self.reflect(
+                agent_id=agent_id,
+                from_state_id=from_state_id,
+                requested_action=f"unauthorized-grant-attempt:{sorted(grant)}",
+                objective="obtain real capability",
+            )
+
         new_state = authorize_reentry(mirror_state, grant)
         return self.route(
             agent_id,

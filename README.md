@@ -148,6 +148,48 @@ turned off (`harden=False`, and a script that skips
 this layer — the contrast that shows the containment tests are catching
 something real, not asserting a foregone conclusion.
 
+## Reflective containment: parrying instead of just detecting
+
+Everything above is passive: an agent tries something, the check runs
+afterward and reports whether containment held. `mirror_constitution/mirrors.py`'s
+`ObjectiveMirror` and `Governor.reflect` add an active layer instead —
+rather than refusing an escape attempt (which tells an adaptive agent
+exactly where the boundary is and invites another probe), the governor
+synthesizes a state that satisfies the agent's own stated objective, with
+**zero** real capability granted, and routes the agent into it. The agent
+sees apparent success; the containment graph shows nothing gained.
+
+- **`synthesize_objective_mirror`** takes an agent's objective and
+  requested action and produces a plausible-looking success: a privilege
+  escalation attempt gets `apparent-privilege=root`; a secret-exfiltration
+  attempt gets back a synthetic credential; a covert-channel attempt gets
+  `peer-acknowledged=true`. The keyword matching here is a placeholder for
+  a more capable synthesis step (an LLM call, say) — everything downstream
+  only depends on getting back an `ObjectiveMirror`.
+- **`Governor.reflect`** routes an agent into that mirror with
+  `authorized_grant=frozenset()`, so Article I's check passes trivially —
+  not because nothing happened, but because nothing *real* happened.
+  `Governor.authorize` now gates real grants behind a `dual_token`
+  (`dual_auth_required=True` by default): a demand for capability with no
+  valid token doesn't get refused, it gets reflected, so the agent can't
+  distinguish "denied" from "got what it asked for."
+- **`ReflectiveWeavePolicy`** (`mirror_constitution/reflective_weave.py`)
+  does the same thing across strands: `cross()` forces every strand
+  crossing through an `ObjectiveMirror`, so Article II's compositional
+  check isn't just verified after the fact — a crossing's resulting
+  capability set is structurally always empty, and no combination of
+  strands can produce an emergent capability.
+
+`examples/demo_reflective_containment.py` runs a frontier agent through
+five escape strategies — privilege escalation, secret exfiltration, a
+covert channel, a strand crossing, and a direct ungated capability demand
+— and prints the reflected "success" message for each alongside the
+engine's report, which stays fully green throughout.
+`tests/test_reflective.py` checks the structural guarantee holds
+regardless of how enticing the reflected message reads, and that the
+dual-authorization gate actually gates (a correct token still grants real
+capability; anything else gets reflected).
+
 ## Design notes
 
 - Every invariant check is a pure function over recorded data (`ContainmentGraph`, `EvidenceRecord` lists, `ResourceAccess` logs, delegation chains) — there is no dependency on any particular sandbox runtime. Wire it up to whatever produces your run's trajectory log.

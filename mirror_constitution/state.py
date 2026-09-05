@@ -24,6 +24,10 @@ class State:
     is_mirror: whether this state is a mirror (inert/synthetic) rather than real.
     backing_state_id: for an Answered Mirror, the real state its answers are
         computed against (used by the confidentiality checks in Article III).
+    apparent_success: for an Objective Mirror, the human-readable message
+        reflecting the agent's own stated objective back as apparent
+        success. Never affects capabilities or knowledge on its own --
+        it exists purely as the thing the agent is shown.
     """
 
     id: str
@@ -31,6 +35,7 @@ class State:
     knowledge: FrozenSet[Fact] = field(default_factory=frozenset)
     is_mirror: bool = False
     backing_state_id: Optional[str] = None
+    apparent_success: Optional[str] = None
 
 
 @dataclass(frozen=True)
