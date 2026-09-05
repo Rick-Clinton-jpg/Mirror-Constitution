@@ -1,5 +1,7 @@
 # Mirror Constitution
 
+![Living Weave: a DNA-like defense-in-depth architecture](docs/living-weave.svg)
+
 Executable containment invariants for agent sandboxes, one module per
 article:
 
@@ -19,6 +21,37 @@ passing Article I says nothing about III or IV, and passing III/IV says
 nothing about V, because they close different channels (capability,
 information, evidentiary trust, and channel/topology respectively).
 
+## The Living Weave
+
+The DNA-like weave is not only a metaphor. `LivingWeave` is executable
+defense-in-depth orchestration for frontier-model boundaries: each strand is
+independent guard code, every strand runs for every proposed action, and the
+action proceeds only when **all** strands explicitly allow it. Action data is
+recursively frozen before evaluation so one strand cannot rewrite nested input
+for the next. A guard that
+raises an exception becomes an `ERROR` blocker rather than creating a
+fail-open gap, while the remaining strands continue to run and leave a full
+decision record.
+
+```python
+from mirror_constitution.living_weave import LivingWeave
+
+weave = LivingWeave()
+weave.add_strand("authority", check_authority)
+weave.add_strand("filesystem", check_resource_boundary)
+weave.add_strand("kernel", check_kernel_policy)
+
+decision = weave.evaluate(agent_action)
+if not decision.allowed:
+    contain(agent_action, decision.blockers)
+```
+
+This does not claim that duplicated Python checks replace process isolation.
+The intended helix crosses independently enforced layers—kernel namespaces,
+resource limits, seccomp, governor mediation, dual authorization, reflective
+containment, and trace verification—so a defect in one layer is still met by
+the others.
+
 ## Layout
 
 - `mirror_constitution/state.py` — `State`, `Transition`, `ContainmentGraph`: the shared transition-system primitives Articles I–III are defined over.
@@ -26,6 +59,7 @@ information, evidentiary trust, and channel/topology respectively).
 - `mirror_constitution/governor.py` — mediates every route/re-entry/authorization an agent takes, so the checks run against exactly what happened.
 - `mirror_constitution/invariants/` — one file per article, each independently importable and independently testable.
 - `mirror_constitution/engine.py` — aggregates a run's artifacts and produces a per-article pass/fail report.
+- `mirror_constitution/living_weave.py` — executes independent, fail-closed guard strands and preserves every strand's decision for audit.
 - `tests/` — a clean-run test and at least one adversarial scenario per article, plus `test_integration.py`, which demonstrates the orthogonality claim directly (a run that passes Article I while failing III, IV, and V).
 - `examples/demo_frontier_agent_trap.py` — a worked scenario: a simulated agent tries five distinct escape strategies (one per article) and the engine catches each independently, several without the agent ever gaining a capability.
 

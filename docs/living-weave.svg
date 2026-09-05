@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 420" role="img" aria-labelledby="title desc">
+  <title id="title">The Living Weave defense system</title>
+  <desc id="desc">A DNA-like double helix whose six crossbars represent independent containment layers.</desc>
+  <defs>
+    <linearGradient id="night" x2="1" y2="1">
+      <stop stop-color="#07152d"/><stop offset="1" stop-color="#130b2d"/>
+    </linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="1000" height="420" rx="28" fill="url(#night)"/>
+  <g fill="none" stroke-linecap="round" filter="url(#glow)">
+    <path d="M70 70 C260 70 260 350 450 350 S640 70 830 70 S930 210 970 210" stroke="#55e6ff" stroke-width="8"/>
+    <path d="M70 350 C260 350 260 70 450 70 S640 350 830 350 S930 210 970 210" stroke="#b56cff" stroke-width="8"/>
+  </g>
+  <g stroke="#d9f8ff" stroke-width="4" opacity=".9">
+    <path d="M145 120L145 300"/><path d="M265 170L265 250"/><path d="M385 95L385 325"/>
+    <path d="M505 95L505 325"/><path d="M625 170L625 250"/><path d="M745 120L745 300"/>
+  </g>
+  <g fill="#f7fbff" font-family="system-ui, sans-serif" font-size="18" text-anchor="middle" font-weight="600">
+    <text x="145" y="212">Kernel</text><text x="265" y="212">Seccomp</text>
+    <text x="385" y="212">Governor</text><text x="505" y="212">Dual auth</text>
+    <text x="625" y="212">Mirrors</text><text x="745" y="212">Trace</text>
+  </g>
+  <text x="500" y="395" fill="#bcecff" font-family="system-ui, sans-serif" font-size="24" text-anchor="middle" letter-spacing="4">ONE STRAND MAY FAIL · THE WEAVE FAILS CLOSED</text>
+</svg>

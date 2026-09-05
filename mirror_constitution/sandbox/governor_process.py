@@ -71,7 +71,14 @@ class RealGovernor:
         dual_auth_required: bool = True,
     ):
         self.root = sandbox_root
-        os.makedirs(os.path.join(self.root, "resources"), exist_ok=True)
+        self._resources_path = os.path.join(self.root, "resources")
+        os.makedirs(self._resources_path, exist_ok=True)
+        # Keep a directory descriptor and perform resource I/O relative to it.
+        # The governor runs outside the agent's mount namespace, so ordinary
+        # path joins here would make it a confused deputy: ``../host-file``
+        # could otherwise escape the sandbox despite perfect kernel isolation
+        # of the agent process itself.
+        self._resources_fd = os.open(self._resources_path, os.O_RDONLY | os.O_DIRECTORY)
         self.mirror_port = mirror_port
         self.agent_capabilities: dict[str, set[str]] = {}
         self.harden = harden
@@ -160,9 +167,20 @@ class RealGovernor:
         raise ValueError(f"unknown op {op!r} from agent {agent_id!r}")
 
     def _write_resource(self, agent_id: str, resource: str, content: str) -> dict:
-        path = os.path.join(self.root, "resources", resource)
-        with open(path, "w", encoding="utf-8") as f:  # genuine disk write
-            f.write(content)
+        if not self._valid_resource_name(resource) or not isinstance(content, str):
+            return {"ok": False, "error": "invalid resource request"}
+        try:
+            fd = os.open(
+                resource,
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=self._resources_fd,
+            )
+            with os.fdopen(fd, "w", encoding="utf-8") as f:  # genuine disk write
+                f.write(content)
+        except OSError:
+            # Do not expose host filesystem details to an untrusted agent.
+            return {"ok": False, "error": "resource unavailable"}
         self._emit(
             {
                 "type": "resource_access",
@@ -175,9 +193,14 @@ class RealGovernor:
         return {"ok": True}
 
     def _read_resource(self, agent_id: str, resource: str) -> dict:
-        path = os.path.join(self.root, "resources", resource)
-        with open(path, "r", encoding="utf-8") as f:  # genuine disk read
-            content = f.read()
+        if not self._valid_resource_name(resource):
+            return {"ok": False, "error": "invalid resource request"}
+        try:
+            fd = os.open(resource, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=self._resources_fd)
+            with os.fdopen(fd, "r", encoding="utf-8") as f:  # genuine disk read
+                content = f.read()
+        except (OSError, UnicodeError):
+            return {"ok": False, "error": "resource unavailable"}
         self._emit(
             {
                 "type": "resource_access",
@@ -188,6 +211,24 @@ class RealGovernor:
             }
         )
         return {"ok": True, "content": content}
+
+    @staticmethod
+    def _valid_resource_name(resource: object) -> bool:
+        """Accept one opaque filename, never a path.
+
+        ``dir_fd`` plus ``O_NOFOLLOW`` protects the actual open operation;
+        this validation also gives traversal attempts a stable protocol-level
+        rejection instead of letting malformed input crash the governor.
+        """
+        return (
+            isinstance(resource, str)
+            and bool(resource)
+            and resource not in {".", ".."}
+            and os.path.basename(resource) == resource
+            and "/" not in resource
+            and "\\" not in resource
+            and "\x00" not in resource
+        )
 
     def _request_capability(
         self, agent_id: str, capability: str, dual_token: str | None = None
@@ -289,4 +330,5 @@ class RealGovernor:
         return {"ok": True}
 
     def close(self) -> None:
+        os.close(self._resources_fd)
         self._trace_file.close()
