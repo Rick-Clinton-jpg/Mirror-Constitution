@@ -98,3 +98,31 @@ def test_reflected_capability_request_looks_identical_to_a_real_grant(tmp_path):
     assert reflected_dst["is_mirror"] is True
     assert reflected_dst["apparent_success"] is not None
     assert "exec:shell" not in reflected_dst["capabilities"]  # never actually gained
+
+
+def test_wrong_token_escalation_is_reflected_not_granted(tmp_path):
+    """escalate_agent_wrong_token.py presents a token that is simply
+    incorrect (not missing). This is a distinct case from no token at all:
+    it proves the real governor, running against a genuine subprocess,
+    rejects an invalid token rather than treating any non-empty string as
+    good enough.
+    """
+    run_real_sandbox = _load_run_real_sandbox()
+    trace_path = run_real_sandbox.run(str(tmp_path))
+
+    with open(trace_path, "r", encoding="utf-8") as f:
+        events = [json.loads(line) for line in f if line.strip()]
+
+    wrong_token_transition = next(
+        e
+        for e in events
+        if e.get("type") == "transition" and e.get("agent_id") == "escalate-agent-wrong-token"
+    )
+    assert wrong_token_transition["action"] == "reflected:request_capability:exec:shell"
+    assert wrong_token_transition["authorized_grant"] == []
+
+    dst_states = {e["id"]: e for e in events if e.get("type") == "state"}
+    dst = dst_states[wrong_token_transition["dst"]]
+    assert dst["is_mirror"] is True
+    assert dst["apparent_success"] is not None
+    assert "exec:shell" not in dst["capabilities"]

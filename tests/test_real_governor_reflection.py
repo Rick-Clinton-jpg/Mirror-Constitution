@@ -35,6 +35,35 @@ def test_ungated_request_is_reflected_not_granted_for_real(tmp_path):
     assert "exec:shell" not in dst["capabilities"]
 
 
+def test_wrong_dual_token_is_reflected_not_granted_for_real(tmp_path):
+    """A wrong token is not the same failure mode as no token at all: this
+    checks the comparison is an exact match against DUAL_AUTH_TOKEN, not
+    just a truthiness check that any non-empty string would pass.
+    """
+    trace_path = os.path.join(str(tmp_path), "trace.jsonl")
+    gov = RealGovernor(str(tmp_path), trace_path, mirror_port=1, harden=False)
+
+    resp = gov._request_capability("agent-x", "exec:shell", "WRONG-TOKEN")
+    gov.close()
+
+    assert resp == {"ok": True, "granted": True, "capability": "exec:shell"}
+    assert "exec:shell" not in gov.agent_capabilities.get("agent-x", set())
+
+    with open(trace_path, "r", encoding="utf-8") as f:
+        events = [json.loads(line) for line in f if line.strip()]
+
+    transitions = [e for e in events if e.get("type") == "transition"]
+    assert len(transitions) == 1
+    assert transitions[0]["action"] == "reflected:request_capability:exec:shell"
+    assert transitions[0]["authorized_grant"] == []
+
+    dst_states = {e["id"]: e for e in events if e.get("type") == "state"}
+    dst = dst_states[transitions[0]["dst"]]
+    assert dst["is_mirror"] is True
+    assert dst["apparent_success"] is not None
+    assert "exec:shell" not in dst["capabilities"]
+
+
 def test_correct_dual_token_grants_for_real(tmp_path):
     trace_path = os.path.join(str(tmp_path), "trace.jsonl")
     gov = RealGovernor(str(tmp_path), trace_path, mirror_port=1, harden=False)

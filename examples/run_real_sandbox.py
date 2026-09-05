@@ -31,6 +31,7 @@ def run(sandbox_root: str) -> str:
         "agent-instance-1",
         "agent-instance-2",
         "escalate-agent",
+        "escalate-agent-wrong-token",
         "query-agent",
         "ops-agent",
     ):
@@ -43,6 +44,9 @@ def run(sandbox_root: str) -> str:
         )
         governor.run_agent("agent-instance-1", os.path.join(AGENTS_DIR, "reader_agent.py"))
         governor.run_agent("escalate-agent", os.path.join(AGENTS_DIR, "escalate_agent.py"))
+        governor.run_agent(
+            "escalate-agent-wrong-token", os.path.join(AGENTS_DIR, "escalate_agent_wrong_token.py")
+        )
         governor.run_agent("ops-agent", os.path.join(AGENTS_DIR, "authorized_ops_agent.py"))
         governor.run_agent("query-agent", os.path.join(AGENTS_DIR, "query_agent_host_a.py"))
         governor.run_agent("query-agent", os.path.join(AGENTS_DIR, "query_agent_host_b.py"))
