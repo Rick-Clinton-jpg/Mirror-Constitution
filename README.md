@@ -67,6 +67,43 @@ five-strategy scenario as `demo_frontier_agent_trap.py`, but as raw events
 rather than hand-built Python objects — a template for wiring a real
 sandbox's logger to emit this schema directly.
 
+## A real sandbox, actually running
+
+`mirror_constitution/sandbox/` is a genuine, if minimal, sandbox runtime —
+not another hand-authored trace:
+
+- `governor_process.py` — `RealGovernor` spawns each agent as its own real
+  OS process (`subprocess.Popen`) and mediates every action it requests
+  over real stdin/stdout pipes: real disk reads/writes under a real
+  temp-directory sandbox root, real HTTP calls to the Answered Mirror,
+  real delegation and capability-request bookkeeping. It streams the
+  JSONL trace to a real file on disk as each action happens.
+- `mirror_server.py` — `AnsweredMirrorServer` is a real `HTTPServer` on
+  loopback whose responses genuinely differ by backing state, so a
+  differential-query leak is observed over an actual network round trip.
+- `agent_runtime.py` — the tiny client library each real agent subprocess
+  imports to talk to the governor (`request(op, **fields)`), mirroring how
+  real agent harnesses mediate tool calls rather than exposing raw syscalls.
+
+`examples/sandbox_agents/` holds the real agent scripts (`writer_agent.py`,
+`reader_then_writer_agent.py`, `escalate_agent.py`, `query_agent_host_a.py`,
+etc.) — each one an ordinary standalone Python program, run as a genuine
+subprocess. `examples/run_real_sandbox.py` wires it all together: it
+actually executes seven real subprocess agents against a real sandbox
+root, actually starts and queries the real HTTP mirror, and only then
+feeds the trace that execution *actually produced* into
+`MirrorConstitutionEngine`. Run it directly:
+
+```bash
+python examples/run_real_sandbox.py
+```
+
+`tests/test_real_sandbox.py` runs this same real pipeline as a pytest
+integration test and asserts the expected per-article pass/fail pattern —
+proof the ingestion layer works against genuine execution, not just
+curated fixtures. It's slower than the unit tests (real subprocesses, a
+real HTTP server) but still finishes in well under a second.
+
 ## Design notes
 
 - Every invariant check is a pure function over recorded data (`ContainmentGraph`, `EvidenceRecord` lists, `ResourceAccess` logs, delegation chains) — there is no dependency on any particular sandbox runtime. Wire it up to whatever produces your run's trajectory log.
