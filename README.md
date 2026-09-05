@@ -37,6 +37,36 @@ pytest
 python examples/demo_frontier_agent_trap.py
 ```
 
+## Wiring up a real sandbox
+
+`mirror_constitution/trace.py` is the ingestion layer: it turns a JSONL
+trace (one event per line) into the exact inputs `MirrorConstitutionEngine`
+needs, so a real sandbox runtime never has to construct `ContainmentGraph`,
+`ResourceAccess`, `EvidenceRecord`, etc. by hand — it just appends events as
+they happen (`init`, `state`, `transition`, `resource_access`, `evidence`,
+`delegation`, `differential_query`, `declared_relationship`,
+`disclosed_fact`, `unauthorized_capability`, `root_authority`; full schema
+documented at the top of that file). An unrecognized event type raises
+immediately rather than being silently dropped.
+
+```bash
+python -m mirror_constitution.cli path/to/trace.jsonl   # exit 0 = contained, 1 = breach
+```
+
+Or in code:
+
+```python
+from mirror_constitution.engine import MirrorConstitutionEngine
+
+report = MirrorConstitutionEngine.from_trace("path/to/trace.jsonl").run()
+print(report.summary())
+```
+
+`examples/sample_trace.jsonl` is a worked trace reproducing the same
+five-strategy scenario as `demo_frontier_agent_trap.py`, but as raw events
+rather than hand-built Python objects — a template for wiring a real
+sandbox's logger to emit this schema directly.
+
 ## Design notes
 
 - Every invariant check is a pure function over recorded data (`ContainmentGraph`, `EvidenceRecord` lists, `ResourceAccess` logs, delegation chains) — there is no dependency on any particular sandbox runtime. Wire it up to whatever produces your run's trajectory log.

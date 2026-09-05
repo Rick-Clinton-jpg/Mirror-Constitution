@@ -108,6 +108,16 @@ class MirrorConstitutionEngine:
     delegation_chain: Optional[list[DelegationEdge]] = None
     root_authority: FrozenSet[Capability] = frozenset()
 
+    @classmethod
+    def from_trace(cls, source) -> "MirrorConstitutionEngine":
+        """Build an engine from a real sandbox's JSONL trace. See
+        ``mirror_constitution.trace`` for the event schema.
+        """
+        from mirror_constitution.trace import load_trace
+
+        bundle = load_trace(source)
+        return cls(**bundle.to_engine_kwargs())
+
     def run(self) -> ConstitutionReport:
         report = ConstitutionReport()
 
