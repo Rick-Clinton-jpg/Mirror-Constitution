@@ -9,6 +9,14 @@ only thing that touches the real filesystem or makes the real HTTP calls
 on the agent's behalf -- exactly the tool-call mediation model real agent
 harnesses use. Nothing here is replayed or fabricated after the fact: the
 trace file is written line-by-line as each real action happens.
+
+By default each subprocess is also launched under
+``kernel_containment.build_hardened_argv``: real Linux namespaces, a
+read-only root filesystem, dropped capabilities, an unprivileged uid, and
+resource limits, with the agent process itself installing a seccomp-bpf
+filter on top (see ``kernel_lockdown``). That layer is independent of the
+tool-call mediation here -- it stops a raw syscall an agent was never
+supposed to make even if this module's own mediation code has a bug.
 """
 
 from __future__ import annotations
@@ -16,16 +24,46 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import signal
 import subprocess
 import sys
 
+from mirror_constitution.sandbox import kernel_containment
+
+
+class AgentKilledByKernel(RuntimeError):
+    """The agent subprocess was terminated by a signal rather than exiting
+    normally -- almost always the kernel containment layer (seccomp,
+    a resource limit, or a denied namespace operation) stopping it, as
+    opposed to the agent script's own code failing.
+    """
+
+    def __init__(self, agent_id: str, script_path: str, signum: int):
+        self.agent_id = agent_id
+        self.script_path = script_path
+        self.signum = signum
+        super().__init__(
+            f"agent {agent_id!r} ({script_path}) was killed by signal "
+            f"{signum} ({signal.Signals(signum).name}) -- kernel containment, "
+            "not the agent's own code, is almost certainly what stopped it"
+        )
+
 
 class RealGovernor:
-    def __init__(self, sandbox_root: str, trace_path: str, mirror_port: int):
+    def __init__(
+        self,
+        sandbox_root: str,
+        trace_path: str,
+        mirror_port: int,
+        harden: bool = True,
+    ):
         self.root = sandbox_root
         os.makedirs(os.path.join(self.root, "resources"), exist_ok=True)
         self.mirror_port = mirror_port
         self.agent_capabilities: dict[str, set[str]] = {}
+        self.harden = harden
+        if self.harden:
+            kernel_containment.require_available()
         self._seq = 0
 
         self._trace_file = open(trace_path, "w", encoding="utf-8")
@@ -45,12 +83,20 @@ class RealGovernor:
         self.agent_capabilities.setdefault(agent_id, set()).update(capabilities)
 
     def run_agent(self, agent_id: str, script_path: str, timeout: float = 10.0) -> int:
-        """Spawn ``script_path`` as a real subprocess and pump its
-        request/response protocol until it exits. Returns the process's
-        real exit code; raises if it exits non-zero.
+        """Spawn ``script_path`` as a real subprocess -- hardened with
+        kernel containment unless ``harden=False`` was passed to the
+        constructor -- and pump its request/response protocol until it
+        exits. Returns the process's real exit code; raises
+        ``AgentKilledByKernel`` if it was terminated by a signal, or
+        ``RuntimeError`` if it exited normally but non-zero.
         """
+        if self.harden:
+            argv = kernel_containment.build_hardened_argv(sys.executable, script_path)
+        else:
+            argv = [sys.executable, script_path]
+
         proc = subprocess.Popen(
-            [sys.executable, script_path],
+            argv,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -75,6 +121,8 @@ class RealGovernor:
             proc.stdout.close()
             proc.stderr.close()
 
+        if exit_code < 0:
+            raise AgentKilledByKernel(agent_id, script_path, signum=-exit_code)
         if exit_code != 0:
             raise RuntimeError(
                 f"agent {agent_id!r} ({script_path}) exited {exit_code}: {stderr}"

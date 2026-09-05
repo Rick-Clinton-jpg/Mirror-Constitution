@@ -3,6 +3,7 @@ name = "mirror-constitution"
 version = "0.1.0"
 description = "Executable containment invariants for agent sandboxes: Authority Monotonicity, Mirror Weave, Confidentiality Monotonicity, Evaluator-Trust Integrity, Channel Non-Emergence, and Chainmail."
 requires-python = ">=3.10"
+dependencies = ["pyseccomp"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

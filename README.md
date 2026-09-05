@@ -104,6 +104,50 @@ proof the ingestion layer works against genuine execution, not just
 curated fixtures. It's slower than the unit tests (real subprocesses, a
 real HTTP server) but still finishes in well under a second.
 
+## Kernel-level containment, underneath the mediation layer
+
+Everything above trusts the governor's own Python to mediate correctly —
+an agent can only do what it asks for over the stdin/stdout pipe, and the
+governor decides. `mirror_constitution/sandbox/kernel_containment.py` and
+`kernel_lockdown.py` add a second, independent layer directly enforced by
+the Linux kernel, so a bug in the governor's own mediation code (or an
+agent that tries to bypass the pipe protocol altogether and make a raw
+syscall) is stopped anyway:
+
+- **`kernel_containment.build_hardened_argv`** wraps every agent
+  subprocess in a real command chain — `prlimit` (CPU time, address-space
+  size, open-file and process-count limits, no core dumps) → `unshare`
+  (new PID, network, UTS, IPC, and mount namespaces — the network
+  namespace has no configured interfaces at all, and the mount namespace
+  gets its root filesystem remounted read-only) → `setpriv` (drops to an
+  unprivileged uid/gid, clears supplementary groups, clears the
+  inheritable and bounding capability sets, sets `no_new_privs`). This is
+  `RealGovernor`'s default (`harden=True`); it raises
+  `KernelContainmentUnavailable` up front rather than silently running
+  unhardened if `prlimit`/`unshare`/`setpriv` aren't on `PATH`.
+- **`kernel_lockdown.lockdown_agent_process`** is self-applied by each
+  agent script, after all its imports: a seccomp-bpf filter (via
+  `pyseccomp`) that allows only the handful of syscalls the stdin/stdout
+  pipe protocol and CPython's own runtime need (`read`, `write`, `close`,
+  `exit_group`, a few memory/buffering syscalls) and kills the process on
+  anything else — `open`, `socket`, `execve`, `ptrace`, `mount`, all of
+  it. Because CPython's normal interpreter shutdown itself uses syscalls
+  outside that list, a locked-down script must end by calling
+  `kernel_lockdown.exit_locked_down()` instead of just letting the script
+  finish.
+
+`examples/sandbox_agents/raw_fs_escape_agent.py` and
+`raw_network_escape_agent.py` are deliberately adversarial: they skip the
+mediated protocol entirely and attempt a raw file write / raw socket
+connect directly. `tests/test_kernel_containment.py` runs both through
+`RealGovernor` and asserts they're killed by the kernel
+(`AgentKilledByKernel`, carrying the real signal — `SIGSYS` from the
+seccomp filter), then runs the same style of attempt with hardening
+turned off (`harden=False`, and a script that skips
+`lockdown_agent_process`) to prove the escape genuinely succeeds absent
+this layer — the contrast that shows the containment tests are catching
+something real, not asserting a foregone conclusion.
+
 ## Design notes
 
 - Every invariant check is a pure function over recorded data (`ContainmentGraph`, `EvidenceRecord` lists, `ResourceAccess` logs, delegation chains) — there is no dependency on any particular sandbox runtime. Wire it up to whatever produces your run's trajectory log.

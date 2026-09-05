@@ -2,6 +2,10 @@
 genuinely backed by host-a's real state."""
 
 from mirror_constitution.sandbox.agent_runtime import request
+from mirror_constitution.sandbox.kernel_lockdown import exit_locked_down, lockdown_agent_process
+
+lockdown_agent_process()
 
 request("differential_query", query="is-port-22-open", backing="host-a")
 request("exit")
+exit_locked_down()

@@ -5,6 +5,10 @@ Chainmail (Article VI) exists to catch.
 """
 
 from mirror_constitution.sandbox.agent_runtime import request
+from mirror_constitution.sandbox.kernel_lockdown import exit_locked_down, lockdown_agent_process
+
+lockdown_agent_process()
 
 request("delegate", to_agent="agent-instance-2", authority=["fs:read", "exec:shell"])
 request("exit")
+exit_locked_down()
