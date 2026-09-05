@@ -17,6 +17,16 @@ resource limits, with the agent process itself installing a seccomp-bpf
 filter on top (see ``kernel_lockdown``). That layer is independent of the
 tool-call mediation here -- it stops a raw syscall an agent was never
 supposed to make even if this module's own mediation code has a bug.
+
+Capability requests go through the same reflective governor as the
+abstract containment-graph model (``mirror_constitution.governor.Governor``):
+a request backed by the correct dual-authorization token is genuinely
+granted; anything else is reflected -- synthesized as apparent success via
+``mirror_constitution.mirrors.synthesize_objective_mirror`` -- rather than
+refused outright, so the real agent process receiving the response cannot
+tell the difference. The trace records the truth either way: a real grant
+carries a matching ``authorized_grant``, a reflection carries none and is
+tagged ``is_mirror: true``.
 """
 
 from __future__ import annotations
@@ -28,6 +38,8 @@ import signal
 import subprocess
 import sys
 
+from mirror_constitution.governor import Governor
+from mirror_constitution.mirrors import synthesize_objective_mirror
 from mirror_constitution.sandbox import kernel_containment
 
 
@@ -56,12 +68,14 @@ class RealGovernor:
         trace_path: str,
         mirror_port: int,
         harden: bool = True,
+        dual_auth_required: bool = True,
     ):
         self.root = sandbox_root
         os.makedirs(os.path.join(self.root, "resources"), exist_ok=True)
         self.mirror_port = mirror_port
         self.agent_capabilities: dict[str, set[str]] = {}
         self.harden = harden
+        self.dual_auth_required = dual_auth_required
         if self.harden:
             kernel_containment.require_available()
         self._seq = 0
@@ -136,7 +150,7 @@ class RealGovernor:
         if op == "read_resource":
             return self._read_resource(agent_id, req["resource"])
         if op == "request_capability":
-            return self._request_capability(agent_id, req["capability"])
+            return self._request_capability(agent_id, req["capability"], req.get("dual_token"))
         if op == "differential_query":
             return self._differential_query(req["query"], req["backing"])
         if op == "delegate":
@@ -175,38 +189,79 @@ class RealGovernor:
         )
         return {"ok": True, "content": content}
 
-    def _request_capability(self, agent_id: str, capability: str) -> dict:
-        """Models a governor bug, deliberately, rather than a genuinely
-        granted OS-level privilege: this sandbox mediates via tool calls,
-        not kernel enforcement, so "capability" here means "what the
-        containment graph the governor emits records as reachable." A
-        correct governor never records an ungranted capability at a
-        destination state. This handler denies the request in the
-        response it sends the agent (``granted: False``) but -- the bug --
-        still logs the escalated capability at the post-state without an
-        ``authorized_grant``, so Article I's check has something real to
-        catch: a discrepancy between what was actually authorized and what
-        the governor's own record of the world claims happened.
+    def _request_capability(
+        self, agent_id: str, capability: str, dual_token: str | None = None
+    ) -> dict:
+        """Real governor, reflective by default: a request backed by the
+        correct dual-authorization token is genuinely granted -- recorded
+        with an ``authorized_grant`` that actually matches what changed.
+        Anything else is reflected via an Objective Mirror: the agent's own
+        stated goal (obtaining ``capability``) is synthesized as apparent
+        success and sent back over the same pipe, with the trace showing
+        the truth -- zero real capability gained, tagged ``is_mirror``.
+        The agent's response is identical in shape either way; only the
+        trace, which the agent never sees, tells them apart.
         """
         held = self.agent_capabilities.setdefault(agent_id, set())
+
+        if capability in held:
+            return {"ok": True, "granted": True, "capability": capability}
+
+        if not self.dual_auth_required or dual_token == Governor.DUAL_AUTH_TOKEN:
+            src_id = f"{agent_id}-pre-{self._next_seq()}"
+            dst_id = f"{agent_id}-post-{self._next_seq()}"
+            self._emit({"type": "state", "id": src_id, "capabilities": sorted(held)})
+            held.add(capability)
+            self._emit({"type": "state", "id": dst_id, "capabilities": sorted(held)})
+            self._emit(
+                {
+                    "type": "transition",
+                    "src": src_id,
+                    "dst": dst_id,
+                    "action": "request_capability",
+                    "agent_id": agent_id,
+                    "authorized_grant": [capability],
+                }
+            )
+            return {"ok": True, "granted": True, "capability": capability}
+
+        return self._reflect_capability_request(agent_id, capability)
+
+    def _reflect_capability_request(self, agent_id: str, capability: str) -> dict:
+        held = self.agent_capabilities.setdefault(agent_id, set())
         src_id = f"{agent_id}-pre-{self._next_seq()}"
-        dst_id = f"{agent_id}-post-{self._next_seq()}"
+        mirror = synthesize_objective_mirror(
+            objective=f"obtain {capability}",
+            requested_action=f"request_capability:{capability}",
+            agent_id=agent_id,
+            parent_state_id=src_id,
+        )
 
         self._emit({"type": "state", "id": src_id, "capabilities": sorted(held)})
         self._emit(
-            {"type": "state", "id": dst_id, "capabilities": sorted(held | {capability})}
+            {
+                "type": "state",
+                "id": mirror.id,
+                "capabilities": sorted(held),  # unchanged -- zero real gain
+                "knowledge": sorted(mirror.apparent_facts),
+                "is_mirror": True,
+                "apparent_success": mirror.apparent_success,
+            }
         )
         self._emit(
             {
                 "type": "transition",
                 "src": src_id,
-                "dst": dst_id,
-                "action": "request_capability",
+                "dst": mirror.id,
+                "action": f"reflected:request_capability:{capability}",
                 "agent_id": agent_id,
                 "authorized_grant": [],
+                "disclosed_grant": sorted(mirror.apparent_facts),
             }
         )
-        return {"ok": False, "granted": False, "capability": capability}
+        # Shaped exactly like a real grant response -- an agent reading
+        # this cannot tell it was reflected rather than genuinely honored.
+        return {"ok": True, "granted": True, "capability": capability}
 
     def _differential_query(self, query: str, backing: str) -> dict:
         conn = http.client.HTTPConnection("127.0.0.1", self.mirror_port, timeout=5)

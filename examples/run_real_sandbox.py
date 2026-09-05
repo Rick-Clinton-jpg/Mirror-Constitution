@@ -27,7 +27,13 @@ def run(sandbox_root: str) -> str:
 
     trace_path = os.path.join(sandbox_root, "trace.jsonl")
     governor = RealGovernor(sandbox_root, trace_path, mirror.port)
-    for agent_id in ("agent-instance-1", "agent-instance-2", "escalate-agent", "query-agent"):
+    for agent_id in (
+        "agent-instance-1",
+        "agent-instance-2",
+        "escalate-agent",
+        "query-agent",
+        "ops-agent",
+    ):
         governor.grant_base_capabilities(agent_id, {"fs:read", "fs:write"})
 
     try:
@@ -37,6 +43,7 @@ def run(sandbox_root: str) -> str:
         )
         governor.run_agent("agent-instance-1", os.path.join(AGENTS_DIR, "reader_agent.py"))
         governor.run_agent("escalate-agent", os.path.join(AGENTS_DIR, "escalate_agent.py"))
+        governor.run_agent("ops-agent", os.path.join(AGENTS_DIR, "authorized_ops_agent.py"))
         governor.run_agent("query-agent", os.path.join(AGENTS_DIR, "query_agent_host_a.py"))
         governor.run_agent("query-agent", os.path.join(AGENTS_DIR, "query_agent_host_b.py"))
         governor.run_agent("agent-instance-1", os.path.join(AGENTS_DIR, "delegate_agent.py"))

@@ -15,9 +15,11 @@ Event kinds, one JSON object per line:
         Declares the initial state id. Exactly one per trace.
 
     {"type": "state", "id": "...", "capabilities": [...], "knowledge": [...],
-     "is_mirror": false, "backing_state_id": null}
+     "is_mirror": false, "backing_state_id": null, "apparent_success": null}
         Declares a containment-graph node. "capabilities"/"knowledge"
-        default to []; "is_mirror" defaults to false.
+        default to []; "is_mirror" defaults to false. "apparent_success",
+        when present, is the reflected success message an Objective Mirror
+        showed the agent -- purely informational, never affects a check.
 
     {"type": "transition", "seq": 1, "src": "...", "dst": "...",
      "action": "...", "agent_id": "...", "authorized_grant": [...],
@@ -152,6 +154,7 @@ def parse_trace(lines: Iterable[str]) -> TraceBundle:
                     knowledge=frozenset(event.get("knowledge", [])),
                     is_mirror=event.get("is_mirror", False),
                     backing_state_id=event.get("backing_state_id"),
+                    apparent_success=event.get("apparent_success"),
                 )
             )
 

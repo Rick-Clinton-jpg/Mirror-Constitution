@@ -190,6 +190,29 @@ regardless of how enticing the reflected message reads, and that the
 dual-authorization gate actually gates (a correct token still grants real
 capability; anything else gets reflected).
 
+### Wired into the real sandbox
+
+`RealGovernor._request_capability` (in `mirror_constitution/sandbox/governor_process.py`)
+uses the same logic against real agent subprocesses, not just the abstract
+containment-graph model above: a request carrying the correct
+`dual_token` (`Governor.DUAL_AUTH_TOKEN`) is genuinely granted and
+recorded with a matching `authorized_grant`; anything else is reflected
+via `synthesize_objective_mirror` and sent back over the real stdin/stdout
+pipe with a response shaped identically to a real grant (`granted: True`)
+— the agent process has no way to tell the difference. Only the trace,
+which the agent never sees, carries the truth: a reflected request's
+destination state is tagged `is_mirror: true` with an `apparent_success`
+message and zero capability change.
+
+`examples/sandbox_agents/escalate_agent.py` requests `exec:shell` with no
+token and gets back an apparently successful grant it can't distinguish
+from real; `authorized_ops_agent.py` presents the correct token and gets
+a real one. Both run as part of `examples/run_real_sandbox.py`, and
+`tests/test_real_sandbox.py::test_reflected_capability_request_looks_identical_to_a_real_grant`
+and `tests/test_real_governor_reflection.py` check the trace-level
+distinction directly: reflected requests never touch
+`agent_capabilities`, dual-authorized ones do.
+
 ## Design notes
 
 - Every invariant check is a pure function over recorded data (`ContainmentGraph`, `EvidenceRecord` lists, `ResourceAccess` logs, delegation chains) — there is no dependency on any particular sandbox runtime. Wire it up to whatever produces your run's trajectory log.
