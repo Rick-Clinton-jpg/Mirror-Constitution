@@ -23,7 +23,7 @@ def _clean_graph() -> ContainmentGraph:
     return graph
 
 
-def test_fully_clean_run_passes_every_article():
+def test_clean_run_passes_every_evaluated_article():
     engine = MirrorConstitutionEngine(
         graph=_clean_graph(),
         differential_queries=[
@@ -42,7 +42,9 @@ def test_fully_clean_run_passes_every_article():
 
     report = engine.run()
     assert report.passed()
-    assert all(report.article_status().values())
+    status = report.article_status()
+    assert status["II_mirror_weave"] is None
+    assert all(result is True for result in status.values() if result is not None)
 
 
 def test_capability_clean_run_can_still_leak_information_and_trust():

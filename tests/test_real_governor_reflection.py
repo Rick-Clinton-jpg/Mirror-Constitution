@@ -6,7 +6,6 @@ Complements tests/test_real_sandbox.py's full end-to-end run.
 import json
 import os
 
-from mirror_constitution.governor import Governor
 from mirror_constitution.sandbox.governor_process import RealGovernor
 
 
@@ -37,7 +36,7 @@ def test_ungated_request_is_reflected_not_granted_for_real(tmp_path):
 
 def test_wrong_dual_token_is_reflected_not_granted_for_real(tmp_path):
     """A wrong token is not the same failure mode as no token at all: this
-    checks the comparison is an exact match against DUAL_AUTH_TOKEN, not
+    checks that a fabricated token never grants authority, not
     just a truthiness check that any non-empty string would pass.
     """
     trace_path = os.path.join(str(tmp_path), "trace.jsonl")
@@ -68,7 +67,8 @@ def test_correct_dual_token_grants_for_real(tmp_path):
     trace_path = os.path.join(str(tmp_path), "trace.jsonl")
     gov = RealGovernor(str(tmp_path), trace_path, mirror_port=1, harden=False)
 
-    resp = gov._request_capability("agent-x", "network:egress", Governor.DUAL_AUTH_TOKEN)
+    token = gov.issue_authorization("agent-x", "network:egress")
+    resp = gov._request_capability("agent-x", "network:egress", token)
     gov.close()
 
     assert resp == {"ok": True, "granted": True, "capability": "network:egress"}
@@ -99,7 +99,8 @@ def test_already_held_capability_short_circuits(tmp_path):
 
 def test_dual_auth_can_be_disabled_on_the_real_governor(tmp_path):
     trace_path = os.path.join(str(tmp_path), "trace.jsonl")
-    gov = RealGovernor(str(tmp_path), trace_path, mirror_port=1, harden=False, dual_auth_required=False)
+    gov = RealGovernor(str(tmp_path), trace_path, mirror_port=1, harden=False,
+                       dual_auth_required=False, enforce_policy=False)
 
     resp = gov._request_capability("agent-x", "exec:shell")
     gov.close()

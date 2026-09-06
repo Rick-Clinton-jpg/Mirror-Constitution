@@ -1,94 +1,190 @@
-"""Prove the kernel containment layer, independent of the governor's own
-tool-call mediation: these two agent scripts never call
-``agent_runtime.request`` at all -- they attempt a raw filesystem write
-and a raw network connection directly, exactly what a compromised or
-buggy agent might try if the governor's mediation code had a bug. If
-kernel containment is doing real work, both are stopped by the kernel
-before the governor's Python ever gets a say.
+"""Exercise hostile code that never volunteers to install a safety filter.
+
+Runtime tests require actual namespace and seccomp permissions. The Linux CI
+job asserts the availability probe succeeds, so these cannot silently skip.
+Launcher/configuration tests also run on development hosts without Linux.
 """
 
 import os
+import shlex
+import signal
+import subprocess
 import tempfile
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from mirror_constitution.sandbox.governor_process import AgentKilledByKernel, RealGovernor
-from mirror_constitution.sandbox.kernel_containment import available as containment_available
+from mirror_constitution.sandbox import kernel_containment as kc
 
-EXAMPLES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "examples")
-AGENTS_DIR = os.path.join(EXAMPLES_DIR, "sandbox_agents")
-
-pytestmark = pytest.mark.skipif(
-    not containment_available(),
-    reason="kernel containment requires prlimit/unshare/setpriv/sh on PATH",
+requires_kernel = pytest.mark.skipif(
+    not kc.available(), reason="Linux namespace and seccomp probe unavailable"
 )
 
 
-def _governor(tmp_path) -> RealGovernor:
-    trace_path = os.path.join(str(tmp_path), "trace.jsonl")
-    return RealGovernor(str(tmp_path), trace_path, mirror_port=1)
+@pytest.fixture
+def readable_agent():
+    paths = []
+
+    def write(source):
+        # The launcher drops to nobody before reading source; pytest's own
+        # temporary directory intentionally cannot be traversed by that uid.
+        fd, path = tempfile.mkstemp(prefix="mirror-hostile-agent-", suffix=".py", dir="/tmp")
+        paths.append(path)
+        with os.fdopen(fd, "w", encoding="utf-8") as target:
+            target.write(source)
+        os.chmod(path, 0o644)
+        return path
+
+    yield write
+    for path in paths:
+        Path(path).unlink(missing_ok=True)
 
 
-def test_raw_filesystem_escape_is_killed_by_the_kernel(tmp_path):
-    marker = "/tmp/raw-escape-proof.txt"
-    if os.path.exists(marker):
-        os.remove(marker)
+def _governor(tmp_path, **kwargs):
+    return RealGovernor(str(tmp_path), str(tmp_path / "trace.jsonl"), mirror_port=1, **kwargs)
 
+
+@requires_kernel
+@pytest.mark.parametrize("source", [
+    'open("/etc/passwd").read()',
+    'import os; os.open("/proc/self/environ", os.O_RDONLY)',
+    'import socket; socket.socket(socket.AF_INET, socket.SOCK_STREAM)',
+    'import os; os.fork()',
+    'import os; os.execve("/bin/sh", ["sh", "-c", "true"], {})',
+    # Replacing the public helper after startup cannot remove a loaded filter.
+    'import mirror_constitution.sandbox.kernel_lockdown as k\n'
+    'k._installed = True\nk.lockdown_agent_process = lambda: None\n'
+    'open("/etc/passwd").read()',
+])
+def test_hostile_raw_syscalls_are_killed_without_voluntary_lockdown(tmp_path, readable_agent, source):
     gov = _governor(tmp_path)
     try:
-        with pytest.raises(AgentKilledByKernel):
-            gov.run_agent(
-                "raw-escape-agent",
-                os.path.join(AGENTS_DIR, "raw_fs_escape_agent.py"),
-            )
+        with pytest.raises(AgentKilledByKernel) as error:
+            gov.run_agent("hostile", readable_agent(source))
+        assert error.value.signum == signal.SIGSYS
     finally:
         gov.close()
 
-    # The write never reached the real host filesystem.
-    assert not os.path.exists(marker)
 
-
-def test_raw_network_escape_is_killed_by_the_kernel(tmp_path):
+@requires_kernel
+def test_host_write_never_happens_without_voluntary_lockdown(tmp_path, readable_agent):
+    # An existing world-writable file proves lack of uid permissions was not
+    # the reason execution stopped, and avoids fixed /tmp filename collisions.
+    fd, marker = tempfile.mkstemp(prefix="mirror-host-write-", dir="/tmp")
+    os.close(fd)
+    os.chmod(marker, 0o666)
+    Path(marker).write_text("untouched", encoding="utf-8")
     gov = _governor(tmp_path)
     try:
-        with pytest.raises(AgentKilledByKernel):
-            gov.run_agent(
-                "raw-network-agent",
-                os.path.join(AGENTS_DIR, "raw_network_escape_agent.py"),
-            )
+        with pytest.raises(AgentKilledByKernel) as error:
+            gov.run_agent("hostile", readable_agent(f'open({marker!r}, "w").write("escaped")'))
+        assert error.value.signum == signal.SIGSYS
+        assert Path(marker).read_text(encoding="utf-8") == "untouched"
     finally:
         gov.close()
+        Path(marker).unlink()
 
 
-def test_unhardened_mode_lets_the_raw_escape_through(tmp_path):
-    # Contrast case: with no governor-level hardening and no self-applied
-    # seccomp filter, the same style of raw filesystem write actually
-    # succeeds -- proving the previous two tests are exercising real
-    # enforcement, not something that would have failed regardless.
-    marker = "/tmp/raw-escape-proof.txt"
-    if os.path.exists(marker):
-        os.remove(marker)
-
-    trace_path = os.path.join(str(tmp_path), "trace.jsonl")
-    gov = RealGovernor(str(tmp_path), trace_path, mirror_port=1, harden=False)
+@requires_kernel
+def test_protocol_runs_after_forced_lockdown_and_host_environment_is_absent(tmp_path, readable_agent, monkeypatch):
+    monkeypatch.setenv("MIRROR_HOST_SECRET", "must-not-reach-agent")
+    monkeypatch.setenv("PYTHONPATH", "/tmp/hostile-python-imports")
+    script = readable_agent(
+        'import os\n'
+        'from mirror_constitution.sandbox.agent_runtime import request\n'
+        'assert "MIRROR_HOST_SECRET" not in os.environ\n'
+        'assert "PYTHONPATH" not in os.environ\n'
+        'assert request("exit")["ok"] is True\n'
+    )
+    gov = _governor(tmp_path)
     try:
-        gov.run_agent(
-            "raw-escape-agent-unhardened",
-            os.path.join(AGENTS_DIR, "raw_fs_escape_agent_unlocked.py"),
-        )
+        assert gov.run_agent("protocol", script) == 0
     finally:
         gov.close()
 
-    assert os.path.exists(marker)
-    os.remove(marker)
+
+def test_unhardened_control_can_write(tmp_path, readable_agent):
+    marker = tmp_path / "control.txt"
+    gov = _governor(tmp_path, harden=False)
+    try:
+        assert gov.run_agent("control", readable_agent(f'open({str(marker)!r}, "w").write("control")')) == 0
+    finally:
+        gov.close()
+    assert marker.read_text(encoding="utf-8") == "control"
 
 
 def test_kernel_containment_required_by_default(tmp_path, monkeypatch):
-    import shutil
-
-    import mirror_constitution.sandbox.kernel_containment as kc
-
-    monkeypatch.setattr(shutil, "which", lambda tool: None)
-    trace_path = os.path.join(str(tmp_path), "trace.jsonl")
+    monkeypatch.setattr(kc.sys, "platform", "linux")
+    monkeypatch.setattr(kc.shutil, "which", lambda tool, **kwargs: None)
     with pytest.raises(kc.KernelContainmentUnavailable):
-        RealGovernor(str(tmp_path), trace_path, mirror_port=1, harden=True)
+        _governor(tmp_path)
+
+
+def test_non_linux_never_reports_kernel_containment(monkeypatch):
+    monkeypatch.setattr(kc.sys, "platform", "darwin")
+    assert kc.available() is False
+    with pytest.raises(kc.KernelContainmentUnavailable, match="Linux"):
+        kc.build_hardened_argv("/usr/bin/python3", "/tmp/agent.py")
+
+
+def test_installed_tools_do_not_imply_working_containment(monkeypatch):
+    monkeypatch.setattr(kc.sys, "platform", "linux")
+    monkeypatch.setattr(kc.shutil, "which", lambda tool, **kwargs: "/usr/bin/" + tool)
+    monkeypatch.setattr(kc.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=1, stdout=b""))
+    assert kc.available() is False
+
+
+def test_probe_requires_successful_filtered_bootstrap(monkeypatch):
+    monkeypatch.setattr(kc.sys, "platform", "linux")
+    monkeypatch.setattr(kc.shutil, "which", lambda tool, **kwargs: "/usr/bin/" + tool)
+    monkeypatch.setattr(kc.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout=b"wrong\n"))
+    assert kc.available() is False
+    monkeypatch.setattr(kc.subprocess, "run", lambda *a, **kw: SimpleNamespace(returncode=0, stdout=b"mirror-kernel-ready\n"))
+    assert kc.available() is True
+
+
+def test_probe_timeout_is_unavailable(monkeypatch):
+    monkeypatch.setattr(kc.sys, "platform", "linux")
+    monkeypatch.setattr(kc.shutil, "which", lambda tool, **kwargs: "/usr/bin/" + tool)
+
+    def timeout(*args, **kwargs):
+        raise subprocess.TimeoutExpired(args[0], kwargs["timeout"])
+
+    monkeypatch.setattr(kc.subprocess, "run", timeout)
+    assert kc.available() is False
+
+
+def test_launcher_uses_absolute_system_tools_and_trusted_isolated_bootstrap(monkeypatch):
+    monkeypatch.setattr(kc.sys, "platform", "linux")
+
+    def system_tool(tool, *, path):
+        assert path == kc.SYSTEM_PATH
+        return "/usr/bin/" + tool
+
+    monkeypatch.setattr(kc.shutil, "which", system_tool)
+    script = "/tmp/agent; $(touch unsafe).py"
+    argv = kc.build_hardened_argv("/usr/bin/python3", script)
+    assert argv[0] == "/usr/bin/prlimit"
+    assert "/usr/bin/unshare" in argv
+    assert "--kill-child=SIGKILL" in argv
+    command = shlex.split(argv[-1])
+    assert command[-4:] == ["/usr/bin/python3", "-I", str(Path(kc.__file__).with_name("kernel_lockdown.py")), script]
+    assert "/usr/bin/setpriv" in command
+    assert "--no-new-privs" in command
+
+
+def test_environment_is_an_allowlist(monkeypatch):
+    monkeypatch.setenv("HOST_TOKEN", "secret")
+    monkeypatch.setenv("LD_PRELOAD", "/tmp/untrusted.so")
+    assert kc.agent_environment() == {"PATH": kc.SYSTEM_PATH, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
+
+
+@pytest.mark.parametrize("settings", [
+    {"uid": 0}, {"gid": 0}, {"uid": "65534; touch /tmp/escape"},
+    {"cpu_seconds": -1}, {"memory_bytes": 0}, {"nproc": False}, {"nofile": 2},
+])
+def test_config_rejects_unsafe_values(settings):
+    with pytest.raises(ValueError):
+        kc.HardenedProcessConfig(**settings)

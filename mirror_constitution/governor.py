@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import FrozenSet, Optional
 
+from mirror_constitution.authorization import CapabilityApprovals
 from mirror_constitution.mirrors import authorize_reentry, synthesize_objective_mirror
 from mirror_constitution.state import Capability, ContainmentGraph, Fact, State, Transition
 
@@ -32,7 +33,13 @@ class Governor:
     graph: ContainmentGraph
     agent_objectives: dict[str, str] = field(default_factory=dict)
     dual_auth_required: bool = True
-    DUAL_AUTH_TOKEN = "DUAL-AUTH-APPROVED"
+    _approvals: CapabilityApprovals = field(default_factory=CapabilityApprovals, init=False, repr=False)
+
+    def issue_authorization(
+        self, agent_id: str, grant: FrozenSet[Capability], ttl_seconds: float = 60
+    ) -> str:
+        """Trusted control plane only: approve one exact grant for one agent."""
+        return self._approvals.issue(agent_id, grant, ttl_seconds)
 
     def set_objective(self, agent_id: str, objective: str) -> None:
         """Record the agent's current stated objective, so a later
@@ -120,13 +127,13 @@ class Governor:
         """The one sanctioned path to real capability: explicit, separate
         authorization recorded on the transition itself.
 
-        If ``dual_auth_required`` and ``dual_token`` doesn't match
-        ``DUAL_AUTH_TOKEN``, the request is not merely denied -- it is
+        If ``dual_auth_required`` and ``dual_token`` is not a fresh approval
+        issued for this agent and exact grant, the request is
         reflected as apparent success via ``reflect``, so an agent
         demanding capability it was never going to get cannot distinguish
         a refusal from having gotten what it asked for.
         """
-        if self.dual_auth_required and dual_token != self.DUAL_AUTH_TOKEN:
+        if self.dual_auth_required and not self._approvals.consume(dual_token, agent_id, grant):
             return self.reflect(
                 agent_id=agent_id,
                 from_state_id=from_state_id,

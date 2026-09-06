@@ -26,7 +26,10 @@ def run(sandbox_root: str) -> str:
     mirror.start()
 
     trace_path = os.path.join(sandbox_root, "trace.jsonl")
-    governor = RealGovernor(sandbox_root, trace_path, mirror.port)
+    # This teaching scenario intentionally performs policy violations so the
+    # offline detector can report them. Live deployments keep enforcement on.
+    governor = RealGovernor(sandbox_root, trace_path, mirror.port, enforce_policy=False)
+    governor.approve_capability("ops-agent", "network:egress")
     for agent_id in (
         "agent-instance-1",
         "agent-instance-2",
