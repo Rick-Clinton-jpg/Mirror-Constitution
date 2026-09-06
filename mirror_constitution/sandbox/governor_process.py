@@ -47,7 +47,7 @@ from urllib.parse import urlencode
 from mirror_constitution.authorization import CapabilityApprovals
 from mirror_constitution.mirrors import synthesize_objective_mirror
 from mirror_constitution.sandbox import kernel_containment
-from mirror_constitution.sandbox.policy import OperationPolicy
+from mirror_constitution.sandbox.policy import OperationPolicy, valid_resource_name
 
 
 class AgentKilledByKernel(RuntimeError):
@@ -482,16 +482,7 @@ class RealGovernor:
         this validation also gives traversal attempts a stable protocol-level
         rejection instead of letting malformed input crash the governor.
         """
-        return (
-            RealGovernor._bounded_text(resource, 255)
-            and not resource.startswith(".resource-")
-            and bool(resource)
-            and resource not in {".", ".."}
-            and os.path.basename(resource) == resource
-            and "/" not in resource
-            and "\\" not in resource
-            and "\x00" not in resource
-        )
+        return valid_resource_name(resource)
 
     def _request_capability(
         self, agent_id: str, capability: str, dual_token: str | None = None

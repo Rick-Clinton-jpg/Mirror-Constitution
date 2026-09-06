@@ -91,3 +91,13 @@ def test_control_plane_approval_is_exact_expiring_and_single_use(governor, monke
 def test_legacy_bypass_switch_is_not_allowed_with_enforcement(tmp_path):
     with pytest.raises(ValueError, match="demonstration"):
         RealGovernor(str(tmp_path), str(tmp_path / "trace"), 1, harden=False, dual_auth_required=False)
+
+
+@pytest.mark.parametrize('alias', ['SECRET', 'Secret', 'sécret', 'se\u0301cret', 'secret.', 'secret ', 'secret:stream'])
+def test_filesystem_aliases_cannot_create_distinct_acl_entries(governor, alias):
+    governor.grant_base_capabilities('alice', {'fs:write'})
+    governor.grant_resource_access('alice', 'secret', frozenset({'write'}))
+    assert governor._handle('alice', {'op':'write_resource','resource':'secret','content':'private'})['ok']
+    with pytest.raises(ValueError, match='canonical'):
+        governor.grant_resource_access('bob', alias, frozenset({'read'}))
+    assert not governor._read_resource('bob', alias)['ok']

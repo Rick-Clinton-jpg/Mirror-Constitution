@@ -28,8 +28,7 @@ jobs:
         run: |
           sudo env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
-            "$PWD/.venv/bin/python" -c \
-            'from mirror_constitution.sandbox.kernel_containment import available; assert available(), "Linux namespaces, privilege drop, and seccomp must work; skipping is forbidden in this job"'
+            "$PWD/.venv/bin/python" scripts/check_kernel.py
           sudo env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin \
             PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 \
             "$PWD/.venv/bin/python" -m pytest -q -ra

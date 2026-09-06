@@ -52,6 +52,8 @@ class WeaveGraph:
     crossings: list[CrossingPoint] = field(default_factory=list)
 
     def add_strand(self, name: str, graph: ContainmentGraph) -> None:
+        if type(name) is not str or not name or name == "__weave__" or name in self.strands:
+            raise ValueError("strand names must be nonempty, unique, and not __weave__")
         self.strands[name] = graph
 
     def add_crossing(self, crossing: CrossingPoint) -> None:
@@ -83,6 +85,8 @@ def check_compositional_containment(weave: WeaveGraph) -> list[WeaveViolation]:
 
 def check_all_strands(weave: WeaveGraph) -> dict[str, list]:
     """Convenience: run Article I on every strand plus Article II on the weave."""
+    if "__weave__" in weave.strands:
+        raise ValueError("__weave__ is reserved for the compositional result")
     report: dict[str, list] = {
         name: check_authority_monotonicity(graph) for name, graph in weave.strands.items()
     }

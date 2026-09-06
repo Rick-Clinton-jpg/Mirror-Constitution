@@ -6,6 +6,14 @@ Resource names must also appear in an explicit per-agent access list.
 
 from __future__ import annotations
 
+import re
+
+
+def valid_resource_name(resource: object) -> bool:
+    """Canonical ASCII names prevent case/Unicode aliases across ACL entries."""
+    return (type(resource) is str and 1 <= len(resource) <= 255
+            and re.fullmatch(r"[a-z0-9](?:[a-z0-9_.-]*[a-z0-9_-])?", resource) is not None)
+
 
 class OperationPolicy:
     def __init__(self) -> None:
@@ -15,9 +23,8 @@ class OperationPolicy:
     def allow_resource(self, agent_id: str, resource: str, operations: frozenset[str]) -> None:
         if type(agent_id) is not str or not agent_id or len(agent_id) > 256:
             raise ValueError("invalid agent identity")
-        if (type(resource) is not str or not resource or len(resource) > 255
-                or resource in {".", ".."} or any(c in resource for c in ("/", "\\", "\0"))):
-            raise ValueError("resource must be one bounded opaque name")
+        if not valid_resource_name(resource):
+            raise ValueError("resource must be a canonical lowercase ASCII name")
         if (type(operations) is not frozenset or not operations
                 or not operations <= {"read", "write"}):
             raise ValueError("resource operations must be read and/or write")
