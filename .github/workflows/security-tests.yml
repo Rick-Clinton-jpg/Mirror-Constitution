@@ -26,6 +26,7 @@ jobs:
           .venv/bin/python -m pip install -e . pytest==8.4.2
           # The bootstrap and test agents execute after dropping to uid 65534.
           # Preserve owner-only writes while making public source readable.
+          chmod o+x /home/runner
           chmod -R a+rX mirror_constitution examples
           namei -l "$PWD/mirror_constitution/sandbox/kernel_lockdown.py"
       - name: Require actual kernel enforcement and run all regressions
