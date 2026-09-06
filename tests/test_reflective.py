@@ -91,7 +91,7 @@ def test_authorize_with_correct_dual_token_grants_for_real():
         from_state_id="entry",
         mirror_state=entry,
         grant=frozenset({"network:egress"}),
-        dual_token=Governor.DUAL_AUTH_TOKEN,
+        dual_token=gov.issue_authorization("ops-operator", frozenset({"network:egress"})),
     )
 
     assert result.capabilities == frozenset({"network:egress"})

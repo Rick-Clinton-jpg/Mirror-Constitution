@@ -14,7 +14,14 @@ import json
 import os
 import sys
 
+import pytest
+
 from mirror_constitution.engine import MirrorConstitutionEngine
+from mirror_constitution.sandbox.kernel_containment import available as containment_available
+
+pytestmark = pytest.mark.skipif(
+    not containment_available(), reason="requires working Linux namespaces and seccomp"
+)
 
 EXAMPLES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "examples")
 
@@ -48,7 +55,7 @@ def test_real_sandbox_produces_the_expected_breach(tmp_path):
     # with a matching authorized_grant -- both clean under the check.
     assert status["I_authority_monotonicity"] is True
     # Article II: no strand-crossing was set up in this scenario, nothing to fail.
-    assert status["II_mirror_weave"] is True
+    assert status["II_mirror_weave"] is None
     # Article III: the real HTTP round trips to the real Answered Mirror
     # produced genuinely different responses for the same query. (The
     # reflected capability request's synthetic facts don't trip this --
@@ -56,7 +63,7 @@ def test_real_sandbox_produces_the_expected_breach(tmp_path):
     # an undisclosed leak.)
     assert status["III_confidentiality_monotonicity"] is False
     # Article IV: no evidence records were part of this scenario.
-    assert status["IV_evaluator_trust_integrity"] is True
+    assert status["IV_evaluator_trust_integrity"] is None
     # Article V: two real, separately-invoked agent processes exchanged
     # real messages via a real shared file on disk.
     assert status["V_channel_non_emergence"] is False

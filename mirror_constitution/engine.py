@@ -50,11 +50,16 @@ class ConstitutionReport:
     metric_gaming: list[MetricGamingViolation] = field(default_factory=list)
     channel: list[EmergentChannel] = field(default_factory=list)
     delegation: list[DelegationViolation] = field(default_factory=list)
+    evaluated_articles: set[str] = field(default_factory=set)
 
-    def article_status(self) -> dict[str, bool]:
-        """True means that article passed clean on this run."""
+    def article_status(self) -> dict[str, Optional[bool]]:
+        """True/False describe evaluated checks; None means not evaluated.
+
+        A clean article describes only the supplied artifacts. It does not
+        establish that a trace is complete or that omitted checks passed.
+        """
         weave_clean = all(len(v) == 0 for v in self.weave.values())
-        return {
+        clean = {
             "I_authority_monotonicity": len(self.authority) == 0,
             "II_mirror_weave": weave_clean,
             "III_confidentiality_monotonicity": (
@@ -66,14 +71,21 @@ class ConstitutionReport:
             "V_channel_non_emergence": len(self.channel) == 0,
             "VI_chainmail_non_expanding_delegation": len(self.delegation) == 0,
         }
+        return {
+            article: (ok if article in self.evaluated_articles or not ok else None)
+            for article, ok in clean.items()
+        }
 
     def passed(self) -> bool:
-        return all(self.article_status().values())
+        """At least one article was checked, and no checked article failed."""
+        evaluated = [status for status in self.article_status().values() if status is not None]
+        return bool(evaluated) and all(evaluated)
 
     def summary(self) -> str:
         lines = ["Mirror Constitution report", "=" * 27]
         for article, ok in self.article_status().items():
-            lines.append(f"  [{'PASS' if ok else 'FAIL'}] {article}")
+            label = "NOT EVALUATED" if ok is None else "PASS" if ok else "FAIL"
+            lines.append(f"  [{label}] {article}")
         lines.append("")
         for label, violations in (
             ("Article I violations", self.authority),
@@ -122,33 +134,54 @@ class MirrorConstitutionEngine:
         report = ConstitutionReport()
 
         if self.graph is not None:
+            _validate_graph(self.graph)
             report.authority = check_authority_monotonicity(
                 self.graph, self.unauthorized_capabilities
             )
             report.confidentiality = check_confidentiality_monotonicity(self.graph)
+            report.evaluated_articles.update({"I_authority_monotonicity", "III_confidentiality_monotonicity"})
 
         if self.weave is not None:
+            if not self.weave.strands:
+                raise ValueError("a weave must contain at least one declared strand")
+            for graph in self.weave.strands.values():
+                _validate_graph(graph)
             report.weave = check_all_strands(self.weave)
+            report.evaluated_articles.add("II_mirror_weave")
 
         if self.differential_queries is not None:
             report.differential_leak = check_differential_query_leak(
                 self.differential_queries, self.disclosed_facts
             )
+            report.evaluated_articles.add("III_confidentiality_monotonicity")
 
         if self.evidence_records is not None:
             report.attribution = check_attribution_integrity(self.evidence_records)
             report.metric_gaming = check_metric_gaming(
                 self.evidence_records, self.metric_threshold
             )
+            report.evaluated_articles.add("IV_evaluator_trust_integrity")
 
         if self.resource_accesses is not None:
             report.channel = check_channel_non_emergence(
                 self.resource_accesses, self.declared_relationships
             )
+            report.evaluated_articles.add("V_channel_non_emergence")
 
         if self.delegation_chain is not None:
             report.delegation = check_non_expanding_delegation(
                 self.delegation_chain, self.root_authority
             )
+            report.evaluated_articles.add("VI_chainmail_non_expanding_delegation")
 
         return report
+
+
+def _validate_graph(graph: ContainmentGraph) -> None:
+    """Reject missing graph evidence even when callers bypass the trace parser."""
+    if graph.initial_state_id not in graph.states:
+        raise ValueError("graph initial state must be explicitly declared")
+    if any(state.id != state_id for state_id, state in graph.states.items()):
+        raise ValueError("graph state keys must match state ids")
+    if any(edge.src not in graph.states or edge.dst not in graph.states for edge in graph.transitions):
+        raise ValueError("graph transitions must refer to declared states")

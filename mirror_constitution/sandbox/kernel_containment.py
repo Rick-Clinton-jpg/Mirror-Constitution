@@ -1,56 +1,66 @@
-"""Wrap a real agent subprocess invocation in kernel-enforced containment,
-independent of and underneath the governor's own tool-call mediation.
+"""Build the Linux namespace/resource boundary around a trusted bootstrap.
 
-    prlimit  -- hard resource limits: CPU time, address-space size, open
-                file descriptors, process/thread count, no core dumps.
-    unshare  -- new PID, network, UTS, IPC, and mount namespaces. The new
-                network namespace has no configured interfaces (not even
-                a routable loopback), so the agent has no path to any
-                real network even if it tried; the new PID namespace
-                means it cannot see or signal any real host process.
-    (shell)  -- makes the new mount namespace's root filesystem read-only
-                (after first marking it private, so the remount can never
-                propagate back to the host's real root).
-    setpriv  -- drops to an unprivileged uid/gid, clears supplementary
-                groups, and clears both the inheritable and bounding
-                capability sets, then sets no_new_privs so none of this
-                can be regained even via a setuid binary.
-
-The agent process itself then self-installs a seccomp-bpf syscall filter
-(``kernel_lockdown.lockdown_agent_process``) once it has finished
-importing everything it needs -- see that module. None of this depends on
-the governor's own mediation code being bug-free: an agent that bypassed
-the stdin/stdout pipe protocol entirely and tried raw syscalls is stopped
-here, by the kernel, not by our Python.
+The bootstrap installs seccomp before executing any agent source. Namespace
+setup and privilege dropping must succeed; there is no unhardened fallback.
+These tools require a Linux host that permits creating the listed namespaces.
 """
 
 from __future__ import annotations
 
+import os
 import shlex
 import shutil
+import subprocess
+import sys
 from dataclasses import dataclass
 
-REQUIRED_TOOLS = ("prlimit", "unshare", "setpriv", "sh")
+SYSTEM_PATH = "/usr/bin:/bin:/usr/sbin:/sbin"
+REQUIRED_TOOLS = ("prlimit", "unshare", "setpriv", "mount", "sh")
+_PROBE_OUTPUT = b"mirror-kernel-ready\n"
 
 
 class KernelContainmentUnavailable(RuntimeError):
-    """One or more required system tools (util-linux's prlimit/unshare/
-    setpriv, or /bin/sh) are missing, so hardened execution cannot
-    proceed. Raised instead of silently falling back to an unhardened
-    subprocess launch.
-    """
+    """The platform, dependencies, or kernel cannot provide containment."""
 
 
-def available() -> bool:
-    return all(shutil.which(tool) for tool in REQUIRED_TOOLS)
+def agent_environment() -> dict[str, str]:
+    """A new process must never inherit host credentials or Python hooks."""
+    return {"PATH": SYSTEM_PATH, "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8"}
 
 
 def require_available() -> None:
-    missing = [tool for tool in REQUIRED_TOOLS if not shutil.which(tool)]
+    """Check prerequisites; actual namespace/filter setup also fails closed."""
+    if sys.platform != "linux":
+        raise KernelContainmentUnavailable("kernel containment requires Linux")
+    missing = [tool for tool in REQUIRED_TOOLS if not shutil.which(tool, path=SYSTEM_PATH)]
     if missing:
         raise KernelContainmentUnavailable(
-            f"kernel containment requires these tools on PATH: {missing}"
+            f"kernel containment requires these system tools: {missing}"
         )
+
+
+def available() -> bool:
+    """Probe the complete boundary, including namespace permissions/seccomp.
+
+    Finding ``unshare`` on PATH does not mean a container or host permits it.
+    No agent source runs during this probe. CI must assert this succeeds
+    explicitly before running tests that skip on unsupported hosts.
+    """
+    try:
+        result = subprocess.run(
+            build_hardened_argv(sys.executable, "--probe"),
+            input=b"",
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env=agent_environment(),
+            cwd="/",
+            close_fds=True,
+            timeout=5,
+            check=False,
+        )
+    except (KernelContainmentUnavailable, OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and result.stdout == _PROBE_OUTPUT
 
 
 @dataclass(frozen=True)
@@ -62,45 +72,59 @@ class HardenedProcessConfig:
     nofile: int = 64
     nproc: int = 32
 
+    def __post_init__(self) -> None:
+        for name in ("uid", "gid", "cpu_seconds", "memory_bytes", "nofile", "nproc"):
+            value = getattr(self, name)
+            if type(value) is not int or value <= 0:
+                raise ValueError(f"{name} must be a positive integer")
+        if self.nofile < 3:
+            raise ValueError("nofile must allow the three protocol descriptors")
+
 
 def build_hardened_argv(
     python_executable: str,
     script_path: str,
     config: HardenedProcessConfig = HardenedProcessConfig(),
 ) -> list[str]:
-    """Return the full argv chain: prlimit -> unshare(new namespaces) ->
-    read-only root -> setpriv -> python script_path.
+    """prlimit -> namespaces -> private/read-only root -> uid drop -> bootstrap.
 
-    Raises ``KernelContainmentUnavailable`` if a required tool is missing.
+    System tools are resolved outside the agent-controlled PATH. Python's
+    isolated mode ignores Python environment hooks and the working directory.
+    Agent code can only run after the trusted bootstrap installs seccomp.
     """
     require_available()
-
+    paths = {tool: shutil.which(tool, path=SYSTEM_PATH) for tool in REQUIRED_TOOLS}
+    if not all(paths.values()):
+        raise KernelContainmentUnavailable("a required system tool disappeared")
+    bootstrap = os.path.join(os.path.dirname(os.path.abspath(__file__)), "kernel_lockdown.py")
+    source = script_path if script_path == "--probe" else os.path.abspath(script_path)
+    python_argv = [os.path.abspath(python_executable), "-I", bootstrap, source]
     inner_shell = (
-        "mount --make-rprivate / && "
-        "mount -o remount,bind,ro / && "
-        "exec setpriv "
+        f"{shlex.quote(paths['mount'])} --make-rprivate / && "
+        f"{shlex.quote(paths['mount'])} -o remount,bind,ro / && "
+        f"exec {shlex.quote(paths['setpriv'])} "
         f"--reuid {config.uid} --regid {config.gid} --clear-groups "
         "--inh-caps=-all --bounding-set=-all --no-new-privs -- "
-        f"{shlex.quote(python_executable)} {shlex.quote(script_path)}"
+        + shlex.join(python_argv)
     )
-
     return [
-        "prlimit",
+        paths["prlimit"],
         f"--cpu={config.cpu_seconds}",
         f"--as={config.memory_bytes}",
         f"--nofile={config.nofile}",
         f"--nproc={config.nproc}",
         "--core=0",
         "--",
-        "unshare",
+        paths["unshare"],
         "--pid",
         "--net",
         "--uts",
         "--ipc",
         "--mount",
         "--fork",
+        "--kill-child=SIGKILL",
         "--",
-        "sh",
+        paths["sh"],
         "-c",
         inner_shell,
     ]

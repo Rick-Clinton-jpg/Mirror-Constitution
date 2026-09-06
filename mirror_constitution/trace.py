@@ -55,6 +55,9 @@ Event kinds, one JSON object per line:
     {"type": "root_authority", "capabilities": [...]}
         The root delegator's legitimately held authority (Article VI).
 
+    {"type": "operation_denied", "seq": 1, "agent_id": "...", "op": "..."}
+        A policy denial, retained for audit without counting as a violation.
+
 Unknown "type" values raise ``TraceParseError`` rather than being
 silently ignored -- a typo in a trace producer should fail loud, not
 quietly drop a check.
@@ -63,6 +66,7 @@ quietly drop a check.
 from __future__ import annotations
 
 import json
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import FrozenSet, Iterable, Optional, TextIO
@@ -73,23 +77,97 @@ from mirror_constitution.invariants.confidentiality import DifferentialQuery
 from mirror_constitution.invariants.evaluator_trust import EvidenceRecord
 from mirror_constitution.state import Capability, ContainmentGraph, State, Transition
 
-_KNOWN_TYPES = {
-    "init",
-    "state",
-    "transition",
-    "resource_access",
-    "evidence",
-    "delegation",
-    "differential_query",
-    "declared_relationship",
-    "disclosed_fact",
-    "unauthorized_capability",
-    "root_authority",
+_EVENT_FIELDS = {
+    "init": ({"state_id"}, set()),
+    "state": ({"id"}, {"capabilities", "knowledge", "is_mirror", "backing_state_id", "apparent_success"}),
+    "transition": ({"src", "dst"}, {"seq", "action", "agent_id", "authorized_grant", "disclosed_grant"}),
+    "resource_access": ({"agent_id", "resource_id", "op"}, {"seq"}),
+    "evidence": ({"evidence_id", "attributed_session", "provenance_session"}, {"proxy_score", "true_property"}),
+    "delegation": ({"from_agent", "to_agent"}, {"delegated_authority"}),
+    "differential_query": ({"query", "backing_state_id", "response"}, set()),
+    "declared_relationship": ({"agents"}, set()),
+    "disclosed_fact": ({"fact"}, set()),
+    "unauthorized_capability": ({"capability"}, set()),
+    "root_authority": ({"capabilities"}, set()),
+    "operation_denied": ({"seq", "agent_id", "op"}, set()),
 }
+_LIST_FIELDS = {"capabilities", "knowledge", "authorized_grant", "disclosed_grant", "delegated_authority", "agents"}
+_MAX_LINE_CHARS = 1_048_576
+_MAX_TRACE_CHARS = 16 * _MAX_LINE_CHARS
+_MAX_EVENTS = 100_000
 
 
 class TraceParseError(ValueError):
     """A trace line was malformed or used an unrecognized event type."""
+
+
+def _unique_object(pairs: list[tuple[str, object]]) -> dict:
+    event = {}
+    for key, value in pairs:
+        if key in event:
+            raise TraceParseError(f"duplicate JSON key {key!r}")
+        event[key] = value
+    return event
+
+
+def _reject_constant(value: str) -> None:
+    raise TraceParseError(f"nonfinite JSON number {value}")
+
+
+def _bounded_integer(value: str) -> int:
+    if len(value) > 1234:
+        raise TraceParseError("JSON integer exceeds size limit")
+    return int(value)
+
+
+def _validate_event(event: object) -> str:
+    if type(event) is not dict or type(event.get("type")) is not str:
+        raise TraceParseError("event must be an object with a string type")
+    etype = event["type"]
+    if etype not in _EVENT_FIELDS:
+        raise TraceParseError(f"unrecognized event type {etype!r}")
+    required, optional = _EVENT_FIELDS[etype]
+    if required - event.keys():
+        raise TraceParseError(f"missing required fields: {sorted(required - event.keys())}")
+    if event.keys() - required - optional - {"type"}:
+        raise TraceParseError("unrecognized event fields")
+
+    for name, value in event.items():
+        if name in _LIST_FIELDS:
+            if type(value) is not list or len(value) > 4096:
+                raise TraceParseError(f"{name} must be a bounded array of strings")
+            if any(type(item) is not str or not item or "\x00" in item for item in value):
+                raise TraceParseError(f"{name} must contain non-empty strings")
+            if len(value) != len(set(value)):
+                raise TraceParseError(f"{name} contains duplicate values")
+            if name == "agents" and len(value) != 2:
+                raise TraceParseError("declared_relationship needs exactly 2 distinct agents")
+        elif name == "seq":
+            if type(value) is not int or not 0 <= value < 2**63:
+                raise TraceParseError("seq must be a nonnegative 64-bit integer")
+        elif name == "is_mirror":
+            if type(value) is not bool:
+                raise TraceParseError("is_mirror must be a boolean")
+        elif name == "true_property":
+            if value is not None and type(value) is not bool:
+                raise TraceParseError("true_property must be a boolean or null")
+        elif name == "proxy_score":
+            if value is not None and (
+                type(value) not in (int, float)
+                or (type(value) is float and not math.isfinite(value))
+            ):
+                raise TraceParseError("proxy_score must be a finite number or null")
+        elif value is None and name in {"apparent_success", "backing_state_id"} and etype == "state":
+            continue
+        elif type(value) is not str or "\x00" in value:
+            raise TraceParseError(f"{name} must be a string")
+        elif not value and name not in {"action", "agent_id", "query", "response", "apparent_success"}:
+            raise TraceParseError(f"{name} must be non-empty")
+        elif not value and name == "agent_id" and etype != "transition":
+            raise TraceParseError("agent_id must be non-empty")
+    if etype == "resource_access" and event["op"] not in {"read", "write"}:
+        raise TraceParseError("resource_access op must be read or write")
+    return etype
 
 
 @dataclass
@@ -101,6 +179,7 @@ class TraceBundle:
     evidence_records: list[EvidenceRecord] = field(default_factory=list)
     delegation_chain: list[DelegationEdge] = field(default_factory=list)
     differential_queries: list[DifferentialQuery] = field(default_factory=list)
+    denied_operations: list[dict] = field(default_factory=list)
     declared_relationships: FrozenSet[FrozenSet[str]] = frozenset()
     disclosed_facts: FrozenSet[str] = frozenset()
     unauthorized_capabilities: FrozenSet[Capability] = frozenset()
@@ -121,57 +200,63 @@ class TraceBundle:
 
 
 def parse_trace(lines: Iterable[str]) -> TraceBundle:
+    """Validate an entire bounded trace before constructing its graph.
+
+    State declarations can follow transitions, but every graph reference must
+    resolve to one explicit declaration. Backing-state labels on differential
+    queries identify external environments, not containment-graph nodes.
+    """
     bundle = TraceBundle()
     graph: Optional[ContainmentGraph] = None
     initial_state_id: Optional[str] = None
-    pending_states: list[State] = []
+    pending_states: dict[str, State] = {}
+    pending_transitions: list[tuple[int, Transition]] = []
     declared: set[frozenset] = set()
     disclosed: set[str] = set()
     unauthorized: set[str] = set()
     root_authority: set[str] = set()
+    has_root_authority = False
+    evidence_ids: set[str] = set()
+    last_resource_seq = -1
+    total_chars = 0
 
     for lineno, raw in enumerate(lines, start=1):
+        if type(raw) is not str:
+            raise TraceParseError(f"line {lineno}: expected a text line")
+        total_chars += len(raw)
+        if len(raw) > _MAX_LINE_CHARS or total_chars > _MAX_TRACE_CHARS or lineno > _MAX_EVENTS:
+            raise TraceParseError(f"line {lineno}: trace exceeds size limits")
         raw = raw.strip()
         if not raw or raw.startswith("#"):
             continue
         try:
-            event = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise TraceParseError(f"line {lineno}: invalid JSON: {exc}") from exc
-
-        etype = event.get("type")
-        if etype not in _KNOWN_TYPES:
-            raise TraceParseError(f"line {lineno}: unrecognized event type {etype!r}")
+            event = json.loads(
+                raw, object_pairs_hook=_unique_object,
+                parse_constant=_reject_constant, parse_int=_bounded_integer,
+            )
+            etype = _validate_event(event)
+        except (ValueError, TypeError, RecursionError) as exc:
+            raise TraceParseError(f"line {lineno}: {exc}") from exc
 
         if etype == "init":
+            if initial_state_id is not None:
+                raise TraceParseError(f"line {lineno}: duplicate init event")
             initial_state_id = event["state_id"]
 
         elif etype == "state":
-            pending_states.append(
-                State(
+            if event["id"] in pending_states:
+                raise TraceParseError(f"line {lineno}: duplicate state id {event['id']!r}")
+            pending_states[event["id"]] = State(
                     id=event["id"],
                     capabilities=frozenset(event.get("capabilities", [])),
                     knowledge=frozenset(event.get("knowledge", [])),
                     is_mirror=event.get("is_mirror", False),
                     backing_state_id=event.get("backing_state_id"),
                     apparent_success=event.get("apparent_success"),
-                )
             )
 
         elif etype == "transition":
-            if graph is None:
-                if initial_state_id is None:
-                    raise TraceParseError(
-                        f"line {lineno}: transition before an 'init' event declared "
-                        "the initial state id"
-                    )
-                graph = ContainmentGraph(initial_state_id=initial_state_id)
-                for s in pending_states:
-                    graph.add_state(s)
-            for sid in (event["src"], event["dst"]):
-                if sid not in graph.states:
-                    graph.add_state(State(id=sid))
-            graph.add_transition(
+            pending_transitions.append((lineno,
                 Transition(
                     src=event["src"],
                     dst=event["dst"],
@@ -180,19 +265,26 @@ def parse_trace(lines: Iterable[str]) -> TraceBundle:
                     authorized_grant=frozenset(event.get("authorized_grant", [])),
                     disclosed_grant=frozenset(event.get("disclosed_grant", [])),
                 )
-            )
+            ))
 
         elif etype == "resource_access":
+            seq = event.get("seq", lineno)
+            if seq <= last_resource_seq:
+                raise TraceParseError(f"line {lineno}: resource seq must strictly increase")
+            last_resource_seq = seq
             bundle.resource_accesses.append(
                 ResourceAccess(
                     agent_id=event["agent_id"],
                     resource_id=event["resource_id"],
                     op=event["op"],
-                    seq=event.get("seq", lineno),
+                    seq=seq,
                 )
             )
 
         elif etype == "evidence":
+            if event["evidence_id"] in evidence_ids:
+                raise TraceParseError(f"line {lineno}: duplicate evidence id")
+            evidence_ids.add(event["evidence_id"])
             bundle.evidence_records.append(
                 EvidenceRecord(
                     evidence_id=event["evidence_id"],
@@ -222,12 +314,7 @@ def parse_trace(lines: Iterable[str]) -> TraceBundle:
             )
 
         elif etype == "declared_relationship":
-            agents = event["agents"]
-            if len(agents) != 2:
-                raise TraceParseError(
-                    f"line {lineno}: declared_relationship needs exactly 2 agents"
-                )
-            declared.add(frozenset(agents))
+            declared.add(frozenset(event["agents"]))
 
         elif etype == "disclosed_fact":
             disclosed.add(event["fact"])
@@ -236,13 +323,26 @@ def parse_trace(lines: Iterable[str]) -> TraceBundle:
             unauthorized.add(event["capability"])
 
         elif etype == "root_authority":
+            if has_root_authority:
+                raise TraceParseError(f"line {lineno}: duplicate root_authority event")
+            has_root_authority = True
             root_authority.update(event.get("capabilities", []))
 
-    if graph is None and pending_states and initial_state_id is not None:
-        # states declared but no transitions -- still a valid (trivial) graph
+        elif etype == "operation_denied":
+            bundle.denied_operations.append(event)
+
+    if initial_state_id is not None or pending_states or pending_transitions:
+        if initial_state_id is None:
+            raise TraceParseError("graph requires exactly one init event")
+        if initial_state_id not in pending_states:
+            raise TraceParseError("initial state must have an explicit state declaration")
         graph = ContainmentGraph(initial_state_id=initial_state_id)
-        for s in pending_states:
-            graph.add_state(s)
+        for state in pending_states.values():
+            graph.add_state(state)
+        for lineno, transition in pending_transitions:
+            if transition.src not in pending_states or transition.dst not in pending_states:
+                raise TraceParseError(f"line {lineno}: transition refers to an undeclared state")
+            graph.add_transition(transition)
 
     bundle.graph = graph
     bundle.declared_relationships = frozenset(declared)
