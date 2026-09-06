@@ -1,11 +1,23 @@
 # Mirror Constitution
 
-![Living Weave containment layers](docs/living-weave.svg)
+![Mirror Constitution architecture: an AI action moves through a locked sandbox and governor, then into an approved or denied path, an audit trail, six independent checks, and a clear report](docs/mirror-constitution-architecture.svg)
 
 Mirror Constitution combines an experimental Linux agent sandbox with independent
 checks over recorded execution. It enforces a narrow protocol for untrusted
 Python agents and reports violations in the supplied evidence. It is **not a
 proof that an AI model, a host, or a deployment is unbreakable**.
+
+## Architecture at a glance
+
+An AI agent proposes an action inside a locked sandbox. The governor checks who
+is asking, what they may do, which resource they may use, and the applicable
+limits. An approved request can perform only the exact allowed action; a denied
+request has no real-world effect. Both outcomes remain in the audit trail, where
+six independent checks produce a clear `PASS`, `FAIL`, or `NOT EVALUATED` report.
+
+The checks reinforce one another, but no single check proves complete safety.
+The detailed threat model and deployment limits are documented in
+[SECURITY.md](SECURITY.md).
 
 ## What is enforced
 

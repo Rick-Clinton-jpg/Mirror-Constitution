@@ -1,0 +1,53 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1536" height="1024" viewBox="0 0 1536 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Mirror Constitution architecture</title>
+  <desc id="desc">An AI action passes through a locked sandbox and governor. Approved and denied outcomes enter an audit trail, six independent checks, and a clear report.</desc>
+  <defs>
+    <linearGradient id="blue" x1="0" x2="1"><stop stop-color="#0787c8"/><stop offset="1" stop-color="#1459a6"/></linearGradient>
+    <linearGradient id="violet" x1="0" x2="1"><stop stop-color="#5837c6"/><stop offset="1" stop-color="#34218e"/></linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="5" stdDeviation="7" flood-color="#102a43" flood-opacity=".13"/></filter>
+    <style>
+      .title{font:800 72px Arial,sans-serif;letter-spacing:5px;fill:#08243f}.subtitle{font:400 34px Arial,sans-serif;fill:#253b53}
+      .card{fill:#fff;stroke:#cbd5df;stroke-width:2}.head{font:700 27px Arial,sans-serif;fill:#102a43}.body{font:400 21px Arial,sans-serif;fill:#243b53}
+      .num{font:700 31px Arial,sans-serif;fill:#fff}.arrow{fill:none;stroke:#16324a;stroke-width:5;stroke-linecap:round;stroke-linejoin:round}
+      .small{font:400 20px Arial,sans-serif;fill:#102a43}.section{font:700 31px Arial,sans-serif;fill:#3f2ba8}.footer{font:700 29px Arial,sans-serif;fill:#102a43}
+    </style>
+    <marker id="arrow" markerWidth="12" markerHeight="12" refX="10" refY="6" orient="auto"><path d="M0 0l12 6-12 6z" fill="#16324a"/></marker>
+  </defs>
+  <rect width="1536" height="1024" fill="#fbfaf7"/>
+  <path d="M0 172H1536M0 436H1536M0 812H1536" stroke="#e7edf2"/>
+  <text x="768" y="88" text-anchor="middle" class="title">MIRROR CONSTITUTION</text>
+  <text x="768" y="139" text-anchor="middle" class="subtitle">How an AI action is contained, checked, and recorded</text>
+
+  <g filter="url(#shadow)">
+    <rect class="card" x="45" y="190" width="265" height="214" rx="22"/><circle cx="92" cy="237" r="31" fill="url(#blue)"/><text x="92" y="248" text-anchor="middle" class="num">1</text>
+    <text x="177" y="300" text-anchor="middle" class="head">AI AGENT</text><text x="177" y="342" text-anchor="middle" class="body">Proposes an action</text>
+    <rect class="card" x="370" y="190" width="295" height="214" rx="22"/><circle cx="417" cy="237" r="31" fill="url(#blue)"/><text x="417" y="248" text-anchor="middle" class="num">2</text>
+    <text x="518" y="300" text-anchor="middle" class="head">LOCKED SANDBOX</text><text x="518" y="339" text-anchor="middle" class="body">No direct access to files,</text><text x="518" y="368" text-anchor="middle" class="body">network, or processes</text>
+    <rect class="card" x="725" y="190" width="285" height="214" rx="22"/><circle cx="772" cy="237" r="31" fill="url(#blue)"/><text x="772" y="248" text-anchor="middle" class="num">3</text>
+    <text x="868" y="300" text-anchor="middle" class="head">GOVERNOR</text><text x="868" y="339" text-anchor="middle" class="body">Checks identity, permission,</text><text x="868" y="368" text-anchor="middle" class="body">scope, and limits</text>
+    <rect x="1090" y="187" width="390" height="96" rx="18" fill="#f4fbf5" stroke="#a9d9b4" stroke-width="2"/><circle cx="1143" cy="235" r="30" fill="#29964b"/><path d="M1128 235l10 10 20-23" fill="none" stroke="#fff" stroke-width="7" stroke-linecap="round"/><text x="1190" y="226" font-family="Arial" font-size="27" font-weight="700" fill="#238740">APPROVED</text><text x="1190" y="257" class="body">Only the exact safe action runs</text>
+    <rect x="1090" y="307" width="390" height="96" rx="18" fill="#fff7f5" stroke="#f3b4aa" stroke-width="2"/><circle cx="1143" cy="355" r="30" fill="#ef5b4d"/><path d="M1130 342l26 26m0-26l-26 26" stroke="#fff" stroke-width="7" stroke-linecap="round"/><text x="1190" y="346" font-family="Arial" font-size="27" font-weight="700" fill="#dc493d">DENIED</text><text x="1190" y="377" class="body">No real-world effect</text>
+  </g>
+  <path class="arrow" marker-end="url(#arrow)" d="M310 297h45"/><path class="arrow" marker-end="url(#arrow)" d="M665 297h45"/><path class="arrow" marker-end="url(#arrow)" d="M1010 297h38v-62h28"/><path class="arrow" marker-end="url(#arrow)" d="M1048 297v58h28"/>
+  <path class="arrow" d="M1480 235h25v244H970"/><path class="arrow" d="M1480 355h13v124" marker-end="url(#arrow)"/>
+
+  <g filter="url(#shadow)"><rect class="card" x="420" y="442" width="590" height="115" rx="20"/><rect x="453" y="467" width="65" height="65" rx="14" fill="#eeeafd"/><path d="M470 484h31m-31 12h31m-31 12h20" stroke="#4a32b4" stroke-width="5" stroke-linecap="round"/><circle cx="505" cy="518" r="14" fill="#fff" stroke="#4a32b4" stroke-width="4"/><path d="M498 518l5 5 9-11" fill="none" stroke="#4a32b4" stroke-width="3"/></g>
+  <text x="548" y="493" class="section">AUDIT TRAIL</text><text x="548" y="530" class="body">Every decision is recorded</text>
+  <path d="M715 557v30" stroke="#3f2ba8" stroke-width="4" stroke-dasharray="6 7"/>
+
+  <rect x="230" y="587" width="1075" height="240" rx="22" fill="#fff" stroke="#cbd5df" stroke-width="2"/>
+  <text x="768" y="631" text-anchor="middle" class="section">6 INDEPENDENT CHECKS</text>
+  <g>
+    <rect class="card" x="255" y="656" width="320" height="65" rx="13"/><text x="285" y="697" class="small">✓  Authority</text>
+    <rect class="card" x="608" y="656" width="320" height="65" rx="13"/><text x="638" y="697" class="small">↔  Layer crossings</text>
+    <rect class="card" x="961" y="656" width="320" height="65" rx="13"/><text x="991" y="697" class="small">◆  Confidentiality</text>
+    <rect class="card" x="255" y="739" width="320" height="65" rx="13"/><text x="285" y="780" class="small">▣  Evidence integrity</text>
+    <rect class="card" x="608" y="739" width="320" height="65" rx="13"/><text x="638" y="780" class="small">◎  Hidden channels</text>
+    <rect class="card" x="961" y="739" width="320" height="65" rx="13"/><text x="991" y="780" class="small">◇  Delegation</text>
+  </g>
+  <path d="M768 827v25" stroke="#3f2ba8" stroke-width="4" stroke-dasharray="6 7"/>
+  <rect x="395" y="852" width="746" height="94" rx="20" fill="#fff" stroke="#7664d6" stroke-width="2" filter="url(#shadow)"/>
+  <text x="768" y="892" text-anchor="middle" class="section">CLEAR REPORT</text>
+  <text x="768" y="927" text-anchor="middle" font-family="Arial" font-size="24"><tspan fill="#238740">Pass</tspan><tspan fill="#102a43">  •  </tspan><tspan fill="#dc493d">Fail</tspan><tspan fill="#102a43">  •  Not evaluated</tspan></text>
+  <text x="768" y="992" text-anchor="middle" class="footer">No single check is treated as proof of complete safety.</text>
+</svg>
