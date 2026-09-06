@@ -178,7 +178,10 @@ def test_unchecked_articles_are_not_green_when_one_article_was_evaluated():
     statuses = report.article_status()
     assert statuses.pop("V_channel_non_emergence") is True
     assert set(statuses.values()) == {None}
-    assert report.passed()
+    assert report.evaluated_checks_passed()
+    assert not report.coverage_complete()
+    assert not report.passed()
+    assert "Overall: INCOMPLETE" in report.summary()
 
 
 def test_default_report_is_not_a_success_certificate():

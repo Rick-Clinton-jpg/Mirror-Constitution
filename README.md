@@ -119,9 +119,11 @@ restricted computation/protocol runtime, not a general-purpose Python container.
 
 `MirrorConstitutionEngine` evaluates the artifacts supplied to it. Each article's
 status is `True` (pass), `False` (violation), or `None` (not evaluated).
-`passed()` requires at least one evaluated article and no failing evaluated
-article. It does not mean that all six articles were tested or that the evidence
-is complete. Reports display omitted articles as `NOT EVALUATED`.
+`passed()` is a fail-closed headline verdict: it returns true only when all six
+articles were evaluated and every one passed. `evaluated_checks_passed()` is the
+explicit partial-assessment result for callers that intentionally supply only
+some artifacts. Reports display omitted articles as `NOT EVALUATED` and label a
+clean partial result `INCOMPLETE` rather than `PASS`.
 
 ```bash
 .venv/bin/python -m mirror_constitution.cli examples/sample_trace.jsonl

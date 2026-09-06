@@ -73,11 +73,14 @@ def main() -> int:
     report = MirrorConstitutionEngine(weave=policy.weave).run()
     print(report.summary())
     print()
-    print("Overall:", "CONTAINED" if report.passed() else "BREACH DETECTED")
+    print(
+        "Checked articles:",
+        "CLEAN (PARTIAL ASSESSMENT)" if report.evaluated_checks_passed() else "BREACH DETECTED",
+    )
     print()
     print("The agent experienced five apparent successes.")
     print("The sandbox never granted a single real capability.")
-    return 0 if report.passed() else 1
+    return 0 if report.evaluated_checks_passed() else 1
 
 
 if __name__ == "__main__":

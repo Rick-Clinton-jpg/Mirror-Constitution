@@ -20,7 +20,7 @@ def test_sample_trace_reproduces_the_five_strategy_breach():
     assert not report.passed()
 
 
-def test_clean_trace_passes_every_applicable_article():
+def test_clean_trace_passes_checked_articles_but_not_complete_verdict():
     lines = [
         '{"type": "init", "state_id": "s0"}',
         '{"type": "state", "id": "s0", "capabilities": [], "knowledge": []}',
@@ -31,7 +31,9 @@ def test_clean_trace_passes_every_applicable_article():
     ]
     engine = MirrorConstitutionEngine.from_trace(lines)
     report = engine.run()
-    assert report.passed()
+    assert report.evaluated_checks_passed()
+    assert not report.coverage_complete()
+    assert not report.passed()
 
 
 def test_unrecognized_event_type_raises():

@@ -54,8 +54,10 @@ Offline invariant checks trust the provenance and completeness of their inputs.
 Strict parsing rejects ambiguous and missing references but cannot detect a
 forged plausible trace or all omitted events. Protect the recorder and storage;
 external durable, authenticated logging is a deployment responsibility.
-Reports explicitly distinguish checks that were not evaluated. A passing subset
-must not be represented as complete containment certification.
+Reports explicitly distinguish checks that were not evaluated. The headline
+`passed()` verdict fails closed unless all six articles were evaluated and
+passed. A clean subset is available only through the explicitly partial
+`evaluated_checks_passed()` result and is reported as `INCOMPLETE`.
 
 The resource/pipe bounds constrain one invocation. Fleet-wide quotas, disk
 capacity, concurrent supervisor use, service rate limiting, and operational

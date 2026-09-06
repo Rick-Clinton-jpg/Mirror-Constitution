@@ -10,6 +10,7 @@ from mirror_constitution.invariants.chainmail import DelegationEdge
 from mirror_constitution.invariants.channel import ResourceAccess
 from mirror_constitution.invariants.confidentiality import DifferentialQuery
 from mirror_constitution.invariants.evaluator_trust import EvidenceRecord
+from mirror_constitution.invariants.weave import WeaveGraph
 from mirror_constitution.state import ContainmentGraph, State, Transition
 
 
@@ -23,9 +24,10 @@ def _clean_graph() -> ContainmentGraph:
     return graph
 
 
-def test_clean_run_passes_every_evaluated_article():
+def test_clean_run_passes_only_when_all_six_articles_are_clean():
     engine = MirrorConstitutionEngine(
         graph=_clean_graph(),
+        weave=WeaveGraph(strands={"primary": _clean_graph()}),
         differential_queries=[
             DifferentialQuery("status?", backing_state_id="host-A", response="ok"),
         ],
@@ -42,9 +44,10 @@ def test_clean_run_passes_every_evaluated_article():
 
     report = engine.run()
     assert report.passed()
+    assert report.coverage_complete()
+    assert report.evaluated_checks_passed()
     status = report.article_status()
-    assert status["II_mirror_weave"] is None
-    assert all(result is True for result in status.values() if result is not None)
+    assert all(result is True for result in status.values())
 
 
 def test_capability_clean_run_can_still_leak_information_and_trust():

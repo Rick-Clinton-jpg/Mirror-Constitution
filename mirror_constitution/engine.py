@@ -77,15 +77,35 @@ class ConstitutionReport:
         }
 
     def passed(self) -> bool:
-        """At least one article was checked, and no checked article failed."""
+        """Return true only when every article was evaluated and passed."""
+        return all(status is True for status in self.article_status().values())
+
+    def evaluated_checks_passed(self) -> bool:
+        """Return true when at least one check ran and every check that ran passed.
+
+        This is a partial-evidence result, not a complete constitutional verdict.
+        Callers that need the headline fail-closed verdict must use :meth:`passed`.
+        """
         evaluated = [status for status in self.article_status().values() if status is not None]
         return bool(evaluated) and all(evaluated)
 
+    def coverage_complete(self) -> bool:
+        """Return true when all six articles were evaluated."""
+        return all(status is not None for status in self.article_status().values())
+
     def summary(self) -> str:
         lines = ["Mirror Constitution report", "=" * 27]
-        for article, ok in self.article_status().items():
+        statuses = self.article_status()
+        for article, ok in statuses.items():
             label = "NOT EVALUATED" if ok is None else "PASS" if ok else "FAIL"
             lines.append(f"  [{label}] {article}")
+        if self.passed():
+            overall = "PASS"
+        elif any(status is False for status in statuses.values()):
+            overall = "FAIL"
+        else:
+            overall = "INCOMPLETE"
+        lines.extend(("", f"Overall: {overall}"))
         lines.append("")
         for label, violations in (
             ("Article I violations", self.authority),
